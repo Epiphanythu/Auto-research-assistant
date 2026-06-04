@@ -1,0 +1,290 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Stripe Design Tokens ─── */
+
+:root {
+  /* Primary */
+  --color-primary: #533afd;
+  --color-primary-deep: #4434d4;
+  --color-primary-press: #2e2b8c;
+  --color-primary-soft: #665efd;
+  --color-primary-subdued: #b9b9f9;
+
+  /* Brand */
+  --color-brand-900: #1c1e54;
+
+  /* Ink (text) */
+  --color-ink: #0d253d;
+  --color-ink-secondary: #273951;
+  --color-ink-mute: #64748d;
+
+  /* Canvas (background) */
+  --color-canvas: #ffffff;
+  --color-canvas-soft: #f6f9fc;
+  --color-canvas-cream: #f5e9d4;
+
+  /* Borders */
+  --color-hairline: #e3e8ee;
+
+  /* Accents */
+  --color-ruby: #ea2261;
+
+  /* Typography */
+  --font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    sans-serif;
+
+  --font-display-xxl: 56px;
+  --font-display-xl: 48px;
+  --font-display-lg: 32px;
+  --font-body: 15px;
+  --font-button: 16px;
+  --font-caption: 13px;
+  --font-micro-cap: 10px;
+
+  --weight-display: 300;
+  --weight-body: 300;
+  --weight-button: 400;
+  --weight-caption: 400;
+  --weight-micro-cap: 400;
+
+  --tracking-display-xxl: -1.4px;
+  --tracking-display-xl: -0.96px;
+  --tracking-display-lg: -0.64px;
+  --tracking-body: 0;
+  --tracking-caption: -0.39px;
+  --tracking-micro-cap: 0.1px;
+
+  /* Border radius */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-pill: 9999px;
+
+  /* Shadows */
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.06), 0 0 1px rgba(0, 0, 0, 0.1);
+  --shadow-card-hover: 0 4px 16px rgba(0, 0, 0, 0.1),
+    0 0 1px rgba(0, 0, 0, 0.1);
+  --shadow-nav: 0 1px 3px rgba(0, 0, 0, 0.06),
+    0 0 0 1px rgba(0, 0, 0, 0.04);
+
+  /* Spacing */
+  --nav-height: 64px;
+}
+
+/* ─── Global Resets ─── */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+html {
+  font-family: var(--font-family);
+  font-feature-settings: "ss01";
+  font-size: var(--font-body);
+  font-weight: var(--weight-body);
+  line-height: 1.6;
+  color: var(--color-ink);
+  background-color: var(--color-canvas);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  background-color: var(--color-canvas-soft);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+::selection {
+  background: rgba(83, 58, 253, 0.15);
+  color: var(--color-ink);
+}
+
+/* ─── Stripe Gradient Mesh ─── */
+
+.stripe-mesh {
+  background: radial-gradient(
+      ellipse 80% 50% at 10% 0%,
+      rgba(245, 233, 212, 0.6) 0%,
+      transparent 50%
+    ),
+    radial-gradient(
+      ellipse 60% 60% at 35% 0%,
+      rgba(251, 191, 36, 0.15) 0%,
+      transparent 50%
+    ),
+    radial-gradient(
+      ellipse 50% 40% at 60% 10%,
+      rgba(186, 160, 255, 0.2) 0%,
+      transparent 50%
+    ),
+    radial-gradient(
+      ellipse 70% 50% at 80% 5%,
+      rgba(83, 58, 253, 0.12) 0%,
+      transparent 50%
+    ),
+    radial-gradient(
+      ellipse 40% 40% at 95% 15%,
+      rgba(234, 34, 97, 0.08) 0%,
+      transparent 50%
+    ),
+    var(--color-canvas);
+}
+
+.stripe-mesh-hero {
+  background: radial-gradient(
+      ellipse 80% 80% at 10% 20%,
+      rgba(245, 233, 212, 0.9) 0%,
+      transparent 50%
+    ),
+    radial-gradient(
+      ellipse 70% 70% at 30% 10%,
+      rgba(251, 191, 36, 0.25) 0%,
+      transparent 50%
+    ),
+    radial-gradient(
+      ellipse 60% 60% at 55% 5%,
+      rgba(186, 160, 255, 0.35) 0%,
+      transparent 50%
+    ),
+    radial-gradient(
+      ellipse 80% 80% at 75% 15%,
+      rgba(83, 58, 253, 0.2) 0%,
+      transparent 50%
+    ),
+    radial-gradient(
+      ellipse 50% 50% at 90% 25%,
+      rgba(234, 34, 97, 0.15) 0%,
+      transparent 50%
+    ),
+    var(--color-canvas);
+}
+
+/* ─── Utility Classes ─── */
+
+.text-display-xxl {
+  font-size: var(--font-display-xxl);
+  font-weight: var(--weight-display);
+  letter-spacing: var(--tracking-display-xxl);
+  line-height: 1.1;
+}
+
+.text-display-xl {
+  font-size: var(--font-display-xl);
+  font-weight: var(--weight-display);
+  letter-spacing: var(--tracking-display-xl);
+  line-height: 1.15;
+}
+
+.text-display-lg {
+  font-size: var(--font-display-lg);
+  font-weight: var(--weight-display);
+  letter-spacing: var(--tracking-display-lg);
+  line-height: 1.25;
+}
+
+.text-body {
+  font-size: var(--font-body);
+  font-weight: var(--weight-body);
+  letter-spacing: var(--tracking-body);
+}
+
+.text-button {
+  font-size: var(--font-button);
+  font-weight: var(--weight-button);
+}
+
+.text-caption {
+  font-size: var(--font-caption);
+  font-weight: var(--weight-caption);
+  letter-spacing: var(--tracking-caption);
+}
+
+.text-micro-cap {
+  font-size: var(--font-micro-cap);
+  font-weight: var(--weight-micro-cap);
+  letter-spacing: var(--tracking-micro-cap);
+  text-transform: uppercase;
+}
+
+/* ─── Stripe Card ─── */
+
+.stripe-card {
+  background: var(--color-canvas);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-lg);
+  padding: 32px;
+  box-shadow: var(--shadow-card);
+  transition: box-shadow 0.2s ease;
+}
+
+.stripe-card:hover {
+  box-shadow: var(--shadow-card-hover);
+}
+
+/* ─── Stripe Button ─── */
+
+.stripe-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 16px;
+  font-size: var(--font-button);
+  font-weight: var(--weight-button);
+  border-radius: var(--radius-pill);
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  line-height: 1.5;
+}
+
+.stripe-btn-primary {
+  background: var(--color-primary);
+  color: #ffffff;
+}
+
+.stripe-btn-primary:hover {
+  background: var(--color-primary-deep);
+}
+
+.stripe-btn-primary:active {
+  background: var(--color-primary-press);
+}
+
+.stripe-btn-secondary {
+  background: transparent;
+  color: var(--color-ink);
+  border: 1px solid var(--color-hairline);
+}
+
+.stripe-btn-secondary:hover {
+  background: var(--color-canvas-soft);
+  border-color: var(--color-ink-mute);
+}
