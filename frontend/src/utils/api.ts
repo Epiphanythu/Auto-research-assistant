@@ -102,6 +102,10 @@ export async function requestArchivedReport(reportId: string): Promise<ResearchR
   return requestApiJson<ResearchReport>(`/api/v1/reports/${reportId}`);
 }
 
+export async function deleteArchivedReport(reportId: string): Promise<void> {
+  await requestApiJson<void>(`/api/v1/reports/${reportId}`, { method: "DELETE" });
+}
+
 // ============ Trend Analysis API ============
 
 export async function requestTrendAnalysis(topic: string, years = 5): Promise<TrendAnalysisResult> {

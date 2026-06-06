@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 
-import type { SSEEvent } from "@/types/research";
+import type { LLMCallStats, SSEEvent } from "@/types/research";
 
 type Props = {
   events: SSEEvent[];
   progress: number;
   isConnected: boolean;
   className?: string;
+  llmCallStats?: LLMCallStats | null;
 };
 
 const STAGE_LABELS: Record<string, string> = {
@@ -22,6 +23,8 @@ const STAGE_LABELS: Record<string, string> = {
   follow_up: "Follow-up Research",
   claim_table: "Building Claim-Evidence Table",
   write: "Writing Research Note",
+  debate: "Critic-Writer Debate",
+  reliability: "Evidence Reliability Assessment",
   verify: "Citation Verification",
   review: "Quality Review",
   finalize: "Finalizing",
@@ -110,6 +113,7 @@ export default function ProgressPanel({
   progress,
   isConnected,
   className = "",
+  llmCallStats = null,
 }: Props) {
   const latestEvent = events.length > 0 ? events[events.length - 1] : null;
   const startTimeRef = useRef<number | null>(null);
@@ -154,6 +158,12 @@ export default function ProgressPanel({
   }
 
   const paperEvents = events.filter((e) => e.event_type === "paper_found");
+
+  // 1. 优先使用外部显式传入的统计；否则尝试从 final_report 事件中读取
+  const finalReportEvent = events.find((event) => event.event_type === "final_report");
+  const finalStats = (finalReportEvent?.data as { llm_call_stats?: LLMCallStats } | undefined)
+    ?.llm_call_stats;
+  const stats: LLMCallStats | null = llmCallStats ?? finalStats ?? null;
 
   return (
     <>
@@ -202,6 +212,28 @@ export default function ProgressPanel({
               }}
             />
           </div>
+
+          {/* ---- LLM call stats（t8/t9 实时统计）---- */}
+          {stats && (stats.call_count ?? 0) > 0 ? (
+            <div
+              className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] tabular-nums"
+              style={{ color: "#64748d" }}
+            >
+              <span>调用 {stats.call_count ?? 0} 次</span>
+              {(stats.cache_hit_count ?? 0) > 0 ? (
+                <span style={{ color: "#16a34a" }}>缓存命中 {stats.cache_hit_count}</span>
+              ) : null}
+              <span>tokens {stats.total_tokens ?? 0}</span>
+              {(stats.prompt_tokens ?? 0) + (stats.completion_tokens ?? 0) > 0 ? (
+                <span>
+                  (in {stats.prompt_tokens ?? 0} / out {stats.completion_tokens ?? 0})
+                </span>
+              ) : null}
+              {(stats.total_elapsed_ms ?? 0) > 0 ? (
+                <span>LLM 耗时 {Math.round((stats.total_elapsed_ms ?? 0) / 1000)}s</span>
+              ) : null}
+            </div>
+          ) : null}
         </div>
 
         {/* ---- Divider ---- */}

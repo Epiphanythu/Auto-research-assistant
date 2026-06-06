@@ -1,0 +1,81 @@
+# GitHub Actions CI 工作流
+name: CI
+
+# 触发条件：任何分支的 push 与 pull_request
+on:
+  push:
+  pull_request:
+
+jobs:
+  # ============================================================
+  # 后端任务：Python 3.9 + uv，运行 pytest
+  # ============================================================
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. 检出代码
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 2. 安装 Python 3.9
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      # 3. 通过 pip 安装 uv（统一依赖管理工具）
+      - name: Install uv
+        run: pip install uv
+
+      # 4. 同步依赖（包含开发依赖以便运行测试）
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      # 5. 准备 .env：优先复制 .env.example，否则写入最小可用环境变量
+      - name: Prepare .env
+        run: |
+          if [ -f .env.example ]; then
+            cp .env.example .env
+          else
+            cat > .env <<'EOF'
+          LLM_BASE_URL=https://example.com
+          LLM_API_KEY=dummy
+          LLM_MODEL=test
+          EOF
+          fi
+
+      # 6. 运行测试，跳过依赖真实 LLM 的用例
+      - name: Run pytest
+        run: |
+          if [ -f tests/test_llm_service_real.py ]; then
+            uv run python -m pytest -q -x --ignore=tests/test_llm_service_real.py
+          else
+            uv run python -m pytest -q
+          fi
+
+  # ============================================================
+  # 前端任务：Node 20 构建产物校验
+  # ============================================================
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./frontend
+    steps:
+      # 1. 检出代码
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 2. 安装 Node 20
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # 3. 安装前端依赖（基于 lockfile 严格安装）
+      - name: Install dependencies
+        run: npm ci
+
+      # 4. 构建生产产物，验证可编译
+      - name: Build
+        run: npm run build

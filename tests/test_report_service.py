@@ -93,6 +93,60 @@ def _build_fake_llm_response(system_prompt: str, user_prompt: str) -> dict:
             "recommended_actions": ["Add more benchmark evaluation studies", "Include industry-scale validation"],
         }
 
+    # Critic (multi-agent debate) -- check BEFORE review
+    if "学术评审者" in user_prompt and "weaknesses" in user_prompt:
+        return {
+            "weaknesses": [
+                {
+                    "point": "研究笔记缺乏对不同方法定量对比的深入分析。",
+                    "severity": "medium",
+                    "suggestion": "补充各方法在相同基准上的性能差异。",
+                },
+            ],
+            "overall_quality": 6,
+            "pass": False,
+        }
+
+    # Writer revision (multi-agent debate)
+    if "研究综合撰写者" in user_prompt and "revision_summary" in user_prompt:
+        return {
+            "research_note": "修订后的研究笔记：LLM-based program repair 正在从摘要级别向基于证据的科研助手演进。通过 Critic-Writer 辩论机制，确保了研究综合的严谨性。",
+            "overview": "修订后的概览：LLM 在程序修复领域的应用正在快速发展。",
+            "trends": ["Retrieval-augmented", "Agent-based orchestration", "Evidence-grounded comparison"],
+            "gaps": ["Full-text evidence tracking still insufficient", "Lack of cross-benchmark comparison"],
+            "next_actions": ["Add full-text parsing", "Enhance evidence localization", "Verify research gaps"],
+            "revision_summary": "根据 Critic 意见，补充了定量对比分析并增强了证据链。",
+        }
+
+    # Unit-level synthesis (Phase 2) -- per-question小节综合
+    if "本节研究问题" in user_prompt:
+        return {
+            "summary": "针对本研究问题，候选论文均聚焦检索增强与代理协同两类方法。",
+            "key_methods": ["Retrieval-augmented generation", "Agent orchestration"],
+            "consensus": ["检索证据有助于提升修复正确率"],
+            "disagreements": [],
+            "supporting_paper_ids": ["mock-001", "mock-002"],
+            "open_questions": ["跨语言修复仍缺基准", "证据片段定位粒度不足"],
+            "confidence": 0.75,
+        }
+
+    # Global synthesis (Phase 2) -- 聚合多个 unit 综合
+    if "各研究问题的小节综合" in user_prompt:
+        return {
+            "overview": "Focuses on using LLMs to improve repair automation.",
+            "trends": ["Retrieval-augmented", "Agent-based orchestration"],
+            "gaps": ["Full-text evidence tracking still insufficient"],
+            "ideas": [
+                {
+                    "title": "Evidence Graph-Driven Repair Survey",
+                    "rationale": "Enhances survey credibility.",
+                    "risk": "Full-text parsing cost is high.",
+                }
+            ],
+            "research_note": "LLM-based program repair is evolving from abstract-level summaries toward evidence-based research assistants.",
+            "next_actions": ["Add full-text parsing", "Enhance evidence localization", "Verify research gaps"],
+        }
+
     # Gap detection
     if "need_follow_up" in user_prompt:
         return {
@@ -264,7 +318,7 @@ def _setup_mocks(monkeypatch, enable_full_text=False, max_full_text=2, max_paper
     monkeypatch.setattr(
         SearchService,
         "search_by_queries",
-        lambda self, queries, max_papers: _build_fake_papers(max_papers),
+        lambda self, queries, max_papers, topic="": _build_fake_papers(max_papers),
     )
     if enable_full_text:
         monkeypatch.setattr(
@@ -311,8 +365,10 @@ class TestGenerateReport:
         assert report.synthesis_reliability is not None
         assert report.synthesis_reliability.overall_score > 0
         assert len(report.synthesis_reliability.claims) >= 1
+        assert report.debate_log is not None
+        assert len(report.debate_log) >= 1
         assert report.review_report.verdict in ("overall_pass", "revision_needed")
-        assert len(report.stage_history) >= 6
+        assert len(report.stage_history) >= 8
         assert len(report.research_note) > 0
         assert len(report.next_actions) >= 3
 
@@ -326,7 +382,7 @@ class TestGenerateReport:
         report = self._to_report(result)
 
         assert report.memory is None
-        assert report.gap_report.need_follow_up is False
+        assert report.comparison.need_follow_up is False
 
     def test_generates_report_with_memory(self, monkeypatch, tmp_path):
         """Report with include_memory=True should attempt to save memory."""
@@ -455,13 +511,8 @@ class TestReportServiceHelpers:
 
     def test_ensure_research_units_creates_fallback(self):
         """_ensure_research_units should create a fallback unit when none are provided."""
-        from app.models.research_models import ResearchBrief, ResearchUnit
-        brief = ResearchBrief(
-            topic="test",
-            objective="objective",
-            key_questions=["What is the main approach?"],
-        )
-        units = ReportService._ensure_research_units([], brief)
+        from app.models.research_models import ResearchUnit
+        units = ReportService._ensure_research_units([], "test topic")
         assert len(units) == 1
         assert units[0].unit_id == "unit-1"
 

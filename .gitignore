@@ -4,6 +4,10 @@ __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 *.egg-info/
 dist/
 build/
@@ -22,11 +26,22 @@ Thumbs.db
 # Environment
 .env
 .env.local
+.python-version
+
+# Logs
+*.log
+logs/
 
 # Frontend
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+
+# Vite cache (root-level)
+.vite/
 
 # Data (generated at runtime)
 app/data/report_archive/

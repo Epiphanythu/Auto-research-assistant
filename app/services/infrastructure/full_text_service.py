@@ -16,10 +16,21 @@ from app.constant.paper_constant import (
     DEFAULT_FULL_TEXT_MIN_TEXT_LENGTH,
     DEFAULT_FULL_TEXT_PAGE_LIMIT,
     FULL_TEXT_SOURCE_PDF,
+    SECTION_HEADING_PATTERNS,
+    SECTION_KIND_OTHER,
 )
 from app.models.research_models import FullTextChunk, FullTextDocument, Paper
+from app.services.infrastructure.pdf_table_service import PdfTableService
 
 logger = logging.getLogger(__name__)
+
+# 编译一次 section 标题匹配正则，提升解析效率
+_SECTION_PATTERNS_COMPILED: list[tuple[str, re.Pattern]] = [
+    (kind, re.compile(pattern, flags=re.IGNORECASE))
+    for kind, pattern in SECTION_HEADING_PATTERNS
+]
+# 章节标题候选行的最大长度（标题通常不会太长，避免把正文整段当成标题）
+_SECTION_HEADING_MAX_LEN = 80
 
 
 class FullTextService:
@@ -117,8 +128,8 @@ class FullTextService:
         )
 
     def _parse_pdf_bytes(self, paper_id: str, pdf_bytes: bytes) -> FullTextDocument | None:
-        """_parse_pdf_bytes 从 PDF 字节流中解析全文分块。"""
-        # 1. 逐页提取文本，并在页内进一步分块，保留 page 与 section 信息。
+        """_parse_pdf_bytes 从 PDF 字节流中解析章节感知的全文分块。"""
+        # 1. 读取 PDF。
         try:
             reader = PdfReader(io.BytesIO(pdf_bytes))
             logger.info(
@@ -134,9 +145,11 @@ class FullTextService:
             )
             raise FullTextParseError(paper_id, str(error)) from error
 
-        chunks: list[FullTextChunk] = []
+        # 2. 逐页提取原始行，附带页码。
         page_limit = min(len(reader.pages), DEFAULT_FULL_TEXT_PAGE_LIMIT)
+        page_lines: list[tuple[int, list[str]]] = []
         failed_pages = 0
+        total_chars = 0
         for page_index in range(page_limit):
             try:
                 raw_text = reader.pages[page_index].extract_text() or ""
@@ -144,78 +157,157 @@ class FullTextService:
                 failed_pages += 1
                 logger.info(
                     "FullTextService._parse_pdf_bytes page extract failed, paper_id=%s, page=%s, error=%s",
-                    paper_id,
-                    page_index + 1,
-                    error,
+                    paper_id, page_index + 1, error,
                 )
                 raw_text = ""
-            normalized_text = self._normalize_text(raw_text)
-            if len(normalized_text) < DEFAULT_FULL_TEXT_MIN_TEXT_LENGTH:
-                logger.info(
-                    "FullTextService._parse_pdf_bytes skip short page, paper_id=%s, page=%s, text_length=%s",
-                    paper_id,
-                    page_index + 1,
-                    len(normalized_text),
-                )
-                continue
-            page_chunks = self._chunk_page_text(
-                normalized_text,
-                page=page_index + 1,
-            )
-            chunks.extend(page_chunks)
-            logger.info(
-                "FullTextService._parse_pdf_bytes page parsed, paper_id=%s, page=%s, chunk_count=%s",
-                paper_id,
-                page_index + 1,
-                len(page_chunks),
-            )
+            lines = self._split_into_lines(raw_text)
+            page_lines.append((page_index + 1, lines))
+            total_chars += sum(len(line) for line in lines)
 
-        # 2. 若抽取不到有效正文，则返回空结果。
-        if not chunks:
+        if total_chars < DEFAULT_FULL_TEXT_MIN_TEXT_LENGTH:
             if failed_pages == page_limit and page_limit > 0:
                 raise FullTextParseError(paper_id, "所有页面在正文抽取阶段均失败。")
-            logger.info("FullTextService._parse_pdf_bytes empty document, paper_id=%s", paper_id)
+            logger.info(
+                "FullTextService._parse_pdf_bytes empty document, paper_id=%s, total_chars=%s",
+                paper_id, total_chars,
+            )
             return None
+
+        # 3. 按行级流式解析，识别章节标题并归并到 (section_title, section_kind) 段落。
+        sections = self._segment_by_section(page_lines)
+        if not sections:
+            logger.info("FullTextService._parse_pdf_bytes no sections detected, paper_id=%s", paper_id)
+            return None
+
+        # 4. 章节内部按字符上限切分为 chunk，保留 page/section/section_kind 元信息。
+        chunks: list[FullTextChunk] = []
+        for section_title, section_kind, page, body in sections:
+            chunks.extend(
+                self._chunk_section_body(
+                    body=body,
+                    section_title=section_title,
+                    section_kind=section_kind,
+                    page=page,
+                )
+            )
+
+        if not chunks:
+            logger.info("FullTextService._parse_pdf_bytes empty chunks, paper_id=%s", paper_id)
+            return None
+
+        # 5. 调用 pdfplumber 抽取表格作为定量结果，失败时仅落空列表不阻断主流程
+        tables = PdfTableService().extract_tables(pdf_bytes, paper_id)
+
         logger.info(
-            "FullTextService._parse_pdf_bytes completed, paper_id=%s, total_chunks=%s",
-            paper_id,
-            len(chunks),
+            "FullTextService._parse_pdf_bytes completed, paper_id=%s, sections=%s, chunks=%s, tables=%s",
+            paper_id, len(sections), len(chunks), len(tables),
         )
         return FullTextDocument(
             paper_id=paper_id,
             source=FULL_TEXT_SOURCE_PDF,
             page_count=page_limit,
             chunks=chunks,
+            tables=tables,
         )
 
     @staticmethod
-    def _normalize_text(text: str) -> str:
-        """_normalize_text 规整 PDF 提取文本。"""
-        collapsed_text = re.sub(r"\s+", " ", text)
-        return collapsed_text.strip()
+    def _split_into_lines(text: str) -> list[str]:
+        """_split_into_lines 把 PDF 抽取的文本按换行切分并清洗。"""
+        # 1. 把多空格折叠为一个空格，但保留换行作为行分隔。
+        if not text:
+            return []
+        lines = text.splitlines()
+        cleaned: list[str] = []
+        for line in lines:
+            collapsed = re.sub(r"[\t\f\v]+", " ", line)
+            collapsed = re.sub(r" +", " ", collapsed).strip()
+            if collapsed:
+                cleaned.append(collapsed)
+        return cleaned
 
-    def _chunk_page_text(self, page_text: str, page: int) -> list[FullTextChunk]:
-        """_chunk_page_text 将单页正文按长度分块。"""
-        # 1. 以句子为边界切块，避免纯长度切分破坏语义连续性。
+    @staticmethod
+    def _classify_heading(line: str) -> tuple[str, str] | None:
+        """_classify_heading 判断某行是否为章节标题，返回 (kind, normalized_title) 或 None。"""
+        # 1. 标题不会太长，长行直接判断为正文。
+        if not line or len(line) > _SECTION_HEADING_MAX_LEN:
+            return None
+        # 2. 用预编译规则匹配一次，避免重复正则编译开销。
+        for kind, pattern in _SECTION_PATTERNS_COMPILED:
+            if pattern.search(line):
+                return kind, line.strip()
+        return None
+
+    def _segment_by_section(
+        self,
+        page_lines: list[tuple[int, list[str]]],
+    ) -> list[tuple[str, str, int, str]]:
+        """_segment_by_section 把页内行流式切分为 (section_title, section_kind, page, body) 列表。"""
+        # 1. 初始化游标，未识别到章节前默认归入 "Preamble / other"。
+        sections: list[tuple[str, str, int, list[str]]] = []
+        current_title = "Preamble"
+        current_kind = SECTION_KIND_OTHER
+        current_page = 1
+        current_buffer: list[str] = []
+
+        # 2. 顺序扫描每一行，遇到章节标题就 flush 当前段落并开启新段。
+        for page, lines in page_lines:
+            if not current_buffer and not sections:
+                current_page = page
+            for line in lines:
+                heading = self._classify_heading(line)
+                if heading is not None:
+                    if current_buffer:
+                        sections.append(
+                            (current_title, current_kind, current_page, list(current_buffer))
+                        )
+                    kind, title = heading
+                    current_title = title
+                    current_kind = kind
+                    current_page = page
+                    current_buffer = []
+                else:
+                    current_buffer.append(line)
+
+        # 3. 收尾：把最后一段也写入。
+        if current_buffer:
+            sections.append((current_title, current_kind, current_page, list(current_buffer)))
+
+        # 4. 把 list[str] body 拼成段落字符串后返回。
+        merged: list[tuple[str, str, int, str]] = []
+        for title, kind, page, body in sections:
+            text = " ".join(body).strip()
+            if len(text) >= 80:
+                merged.append((title, kind, page, text))
+        return merged
+
+    def _chunk_section_body(
+        self,
+        body: str,
+        section_title: str,
+        section_kind: str,
+        page: int,
+    ) -> list[FullTextChunk]:
+        """_chunk_section_body 把单个章节正文切分为多个 chunk，受字符上限约束。"""
+        # 1. 以句子为最小切块单元，避免破坏语义。
         sentences = [
             sentence.strip()
-            for sentence in re.split(r"(?<=[.!?。；;])\s+", page_text)
+            for sentence in re.split(r"(?<=[.!?。；;])\s+", body)
             if sentence.strip()
         ]
         if not sentences:
             return []
 
-        # 2. 累积句子到上限后输出 chunk，并为每个 chunk 推断 section 名。
+        # 2. 累积到字符上限就 flush 一个 chunk，剩余继续累积。
         chunks: list[FullTextChunk] = []
         buffer: list[str] = []
         for sentence in sentences:
             candidate = " ".join(buffer + [sentence]).strip()
             if buffer and len(candidate) > DEFAULT_FULL_TEXT_CHUNK_CHAR_LIMIT:
-                chunk_text = " ".join(buffer).strip()
                 chunks.append(
                     FullTextChunk(
-                        text=chunk_text,
-                        section=self._infer_section_name(chunk_text, page),
+                        text=" ".join(buffer).strip(),
+                        section=section_title,
+                        section_kind=section_kind,
                         page=page,
                     )
                 )
@@ -223,20 +315,12 @@ class FullTextService:
                 continue
             buffer.append(sentence)
         if buffer:
-            chunk_text = " ".join(buffer).strip()
             chunks.append(
                 FullTextChunk(
-                    text=chunk_text,
-                    section=self._infer_section_name(chunk_text, page),
+                    text=" ".join(buffer).strip(),
+                    section=section_title,
+                    section_kind=section_kind,
                     page=page,
                 )
             )
         return chunks
-
-    @staticmethod
-    def _infer_section_name(chunk_text: str, page: int) -> str:
-        """_infer_section_name 根据 chunk 首行推断 section。"""
-        heading_match = re.match(r"^\s*([A-Z][A-Za-z0-9\s\-:]{2,60})", chunk_text)
-        if heading_match:
-            return heading_match.group(1).strip()
-        return f"Page {page}"

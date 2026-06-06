@@ -16,16 +16,13 @@ def _clear_search_cache():
 
 from app.models.research_models import (
     CitationVerificationReport,
-    ClarificationResult,
     ComparisonSummary,
     EvidenceBundle,
     FullTextChunk,
     FullTextDocument,
-    GapReport,
     InnovationIdea,
     Paper,
     PaperInsight,
-    ResearchBrief,
     ResearchPlan,
     ResearchRequest,
     ResearchUnit,
@@ -102,26 +99,6 @@ def sample_plan() -> ResearchPlan:
 
 
 @pytest.fixture
-def sample_clarification() -> ClarificationResult:
-    """Return a sample ClarificationResult for testing."""
-    return ClarificationResult(
-        clarified_topic="test topic",
-        research_goal="Summarize and identify gaps.",
-        scope="Test scope",
-    )
-
-
-@pytest.fixture
-def sample_brief() -> ResearchBrief:
-    """Return a sample ResearchBrief for testing."""
-    return ResearchBrief(
-        topic="test topic",
-        objective="Summarize and identify gaps.",
-        key_questions=["What are the main approaches?"],
-    )
-
-
-@pytest.fixture
 def sample_research_units() -> list[ResearchUnit]:
     """Return a sample list of ResearchUnit for testing."""
     return [
@@ -174,17 +151,6 @@ def sample_comparison() -> ComparisonSummary:
         trends=["Trend A"],
         gaps=["Gap A"],
         ideas=[InnovationIdea(title="Idea A", rationale="Test rationale.", risk="Test risk.")],
-    )
-
-
-@pytest.fixture
-def sample_gap_report() -> GapReport:
-    """Return a sample GapReport for testing."""
-    return GapReport(
-        need_follow_up=False,
-        missing_aspects=[],
-        follow_up_queries=[],
-        reasoning="Current evidence is sufficient.",
     )
 
 

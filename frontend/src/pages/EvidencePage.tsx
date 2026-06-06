@@ -1,6 +1,6 @@
 import { EmptyState } from "@/components/EmptyState";
 import { EvidenceBundlePanel } from "@/components/EvidenceBundlePanel";
-import { CitationPanel, ClaimTablePanel, StageTimeline } from "@/components/ReportPanels";
+import { ReliabilityPanel, StageTimeline } from "@/components/ReportPanels";
 import { useResearchStore } from "@/store/researchStore";
 
 export default function EvidencePage() {
@@ -10,7 +10,7 @@ export default function EvidencePage() {
     return (
       <EmptyState
         title="还没有证据整理结果"
-        description="发起研究任务后，这里会集中展示正文摘录、结论映射、核验结果和阶段记录。"
+        description="发起研究任务后，这里会集中展示正文摘录、可靠性评估和阶段记录。"
       />
     );
   }
@@ -18,11 +18,10 @@ export default function EvidencePage() {
   return (
     <div className="space-y-6">
       <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-        <CitationPanel report={report.citation_verification} />
+        {report.synthesis_reliability && <ReliabilityPanel reliability={report.synthesis_reliability} />}
         <StageTimeline stages={report.stage_history} />
       </div>
-      <EvidenceBundlePanel bundles={report.evidence_bundles} />
-      <ClaimTablePanel rows={report.claim_evidence_table} />
+      <EvidenceBundlePanel bundles={report.evidence_bundles} papers={report.papers ?? []} />
     </div>
   );
 }

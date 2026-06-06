@@ -185,25 +185,42 @@ class TestLoadDocuments:
         assert len(result) == 2
 
 
-class TestTextNormalization:
-    """Tests for FullTextService._normalize_text."""
+class TestSplitIntoLines:
+    """Tests for FullTextService._split_into_lines."""
 
-    def test_collapses_whitespace(self):
-        """Should collapse multiple whitespace into single spaces."""
-        assert FullTextService._normalize_text("hello   world\n\nfoo") == "hello world foo"
+    def test_collapses_inner_whitespace_per_line(self):
+        """连续空白与制表应折叠为单空格，并保留换行作为行分隔。"""
+        out = FullTextService._split_into_lines("hello   world\n\nfoo\tbar")
+        assert out == ["hello world", "foo bar"]
 
-    def test_strips_leading_trailing_whitespace(self):
-        """Should strip leading and trailing whitespace."""
-        assert FullTextService._normalize_text("  hello  ") == "hello"
+    def test_skips_blank_lines(self):
+        """空白行应被丢弃。"""
+        assert FullTextService._split_into_lines("\n   \n hello \n") == ["hello"]
 
 
-class TestSectionInference:
-    """Tests for FullTextService._infer_section_name."""
+class TestClassifyHeading:
+    """Tests for FullTextService._classify_heading (section-aware parsing)."""
 
-    def test_infers_section_from_heading(self):
-        """Should infer section name from a capitalized heading."""
-        assert FullTextService._infer_section_name("Introduction to the problem", 1) == "Introduction to the problem"
+    def test_classifies_method_heading(self):
+        """'3 Method' 应被识别为 method 章节。"""
+        result = FullTextService._classify_heading("3 Method")
+        assert result is not None
+        kind, title = result
+        assert kind == "method"
+        assert title == "3 Method"
 
-    def test_falls_back_to_page_number(self):
-        """Should fall back to 'Page N' when no heading is found."""
-        assert FullTextService._infer_section_name("some lower-case text here", 3) == "Page 3"
+    def test_classifies_results_heading(self):
+        """'4. Results' 应被识别为 result 章节。"""
+        result = FullTextService._classify_heading("4. Results")
+        assert result is not None
+        kind, _ = result
+        assert kind == "result"
+
+    def test_returns_none_for_long_body_line(self):
+        """正文行（长度超过阈值）不应被误判为标题。"""
+        long_line = "Method " + "x" * 200
+        assert FullTextService._classify_heading(long_line) is None
+
+    def test_returns_none_for_plain_sentence(self):
+        """普通正文句不应被识别为章节。"""
+        assert FullTextService._classify_heading("we collect data from web pages") is None

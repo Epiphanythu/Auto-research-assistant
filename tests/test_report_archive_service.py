@@ -7,10 +7,7 @@ import json
 import pytest
 
 from app.models.research_models import (
-    ClarificationResult,
     ComparisonSummary,
-    GapReport,
-    ResearchBrief,
     ResearchPlan,
     ResearchReport,
     ResearchRequest,
@@ -24,12 +21,6 @@ def _build_report() -> ResearchReport:
     """Build a minimal valid ResearchReport for testing."""
     return ResearchReport(
         request=ResearchRequest(topic="test archive", max_papers=2),
-        clarification=ClarificationResult(
-            clarified_topic="test archive",
-            research_goal="Verify archive flow.",
-            scope="Test scope",
-        ),
-        brief=ResearchBrief(topic="test archive", objective="Verify archive flow."),
         plan=ResearchPlan(
             normalized_topic="test archive",
             search_keywords=["test archive"],
@@ -39,7 +30,6 @@ def _build_report() -> ResearchReport:
         papers=[],
         insights=[],
         evidence_bundles=[],
-        gap_report=GapReport(reasoning="Current version for testing."),
         comparison=ComparisonSummary(overview="Test overview."),
         review_report=ReviewReport(verdict="overall_pass"),
         synthesis_reliability=SynthesisReliability(overall_score=0.8),
@@ -171,10 +161,7 @@ class TestReportArchiveGet:
         loaded = service.get_report(summary.report_id)
 
         assert loaded.request == report.request
-        assert loaded.clarification == report.clarification
-        assert loaded.brief == report.brief
         assert loaded.plan == report.plan
-        assert loaded.gap_report == report.gap_report
         assert loaded.comparison == report.comparison
 
         get_settings.cache_clear()

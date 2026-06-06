@@ -255,7 +255,7 @@ export function ResearchForm({
         <button
           type="submit"
           disabled={loading}
-          className="inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-40"
+          className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full px-6 py-2.5 text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-40"
           style={{ background: "#533afd" }}
           onMouseEnter={(e) => {
             if (!e.currentTarget.disabled) e.currentTarget.style.background = "#4434d4";

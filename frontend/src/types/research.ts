@@ -11,6 +11,7 @@ export type EvidenceSnippet = {
   reason: string;
   source: string;
   section: string;
+  section_kind?: string;
   page: number;
 };
 
@@ -57,31 +58,6 @@ export type EvidenceBundle = {
   confidence: number;
 };
 
-export type ClaimEvidenceRow = {
-  claim: string;
-  supporting_unit_ids: string[];
-  supporting_paper_ids: string[];
-  evidence: EvidenceSnippet[];
-  support_level: string;
-  rationale: string;
-};
-
-export type CitationVerificationItem = {
-  claim: string;
-  supported: boolean;
-  support_level: string;
-  matched_claim_indices: number[];
-  reason: string;
-  evidence: EvidenceSnippet[];
-};
-
-export type CitationVerificationReport = {
-  overall_score: number;
-  supported_count: number;
-  unsupported_count: number;
-  items: CitationVerificationItem[];
-};
-
 export type FullTextDocument = {
   paper_id: string;
   source: string;
@@ -89,6 +65,7 @@ export type FullTextDocument = {
   chunks: Array<{
     text: string;
     section: string;
+    section_kind?: string;
     page: number;
   }>;
 };
@@ -104,6 +81,9 @@ export type ComparisonSummary = {
   trends: string[];
   gaps: string[];
   ideas: ComparisonIdea[];
+  need_follow_up: boolean;
+  follow_up_queries: string[];
+  gap_reasoning: string;
 };
 
 export type ReviewReport = {
@@ -113,11 +93,44 @@ export type ReviewReport = {
   revision_advice: string[];
 };
 
-export type GapReport = {
-  need_follow_up: boolean;
-  missing_aspects: string[];
-  follow_up_queries: string[];
+// ─── Multi-Agent Debate ───
+
+export type CriticWeakness = {
+  point: string;
+  severity: string;
+  suggestion: string;
+};
+
+export type DebateRound = {
+  round_number: number;
+  critic_weaknesses: CriticWeakness[];
+  critic_quality_score: number;
+  passed: boolean;
+  revision_summary: string;
+};
+
+// ─── Evidence Reliability ───
+
+export type ClaimReliability = {
+  claim: string;
+  supporting_papers: string[];
+  contradicting_papers: string[];
+  evidence_count: number;
+  reliability_level: string;
+  reliability_score: number;
   reasoning: string;
+  quality_signals: string[];
+};
+
+export type SynthesisReliability = {
+  claims: ClaimReliability[];
+  overall_score: number;
+  strong_count: number;
+  moderate_count: number;
+  weak_count: number;
+  isolated_count: number;
+  coverage_assessment: string;
+  recommended_actions: string[];
 };
 
 export type StageTransition = {
@@ -125,6 +138,54 @@ export type StageTransition = {
   status: string;
   summary: string;
   duration_ms?: number;
+};
+
+// ─── Unit Synthesis (Phase 2) ───
+
+export type UnitSynthesis = {
+  unit_id: string;
+  question: string;
+  summary: string;
+  key_methods: string[];
+  consensus: string[];
+  disagreements: string[];
+  supporting_paper_ids: string[];
+  open_questions: string[];
+  confidence: number;
+};
+
+// ─── Fact Check (Phase 3) ───
+
+export type ClaimFactCheck = {
+  claim: string;
+  supported: boolean;
+  support_level: string;
+  matched_paper_ids: string[];
+  matched_evidence: EvidenceSnippet[];
+  keyword_overlap_score: number;
+  reason: string;
+  nli_verdict?: string | null;
+  nli_rationale?: string;
+};
+
+export type FactCheckReport = {
+  total_claims: number;
+  supported_count: number;
+  weak_count: number;
+  unsupported_count: number;
+  overall_score: number;
+  items: ClaimFactCheck[];
+  flagged_claims: string[];
+  nli_verified_count?: number;
+};
+
+export type Contradiction = {
+  topic: string;
+  claim_a: string;
+  claim_b: string;
+  paper_id_a: string;
+  paper_id_b: string;
+  rationale: string;
 };
 
 export type ReportArchiveSummary = {
@@ -137,24 +198,19 @@ export type ReportArchiveSummary = {
   verdict: string;
 };
 
+// ─── LLM 调用统计（t8/t9） ───
+
+export type LLMCallStats = {
+  call_count?: number;
+  cache_hit_count?: number;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  total_elapsed_ms?: number;
+};
+
 export type ResearchReport = {
   request: ResearchRequest;
-  clarification: {
-    clarified_topic: string;
-    research_goal: string;
-    scope: string;
-    constraints: string[];
-    deliverable: string;
-    output_language: string;
-  };
-  brief: {
-    topic: string;
-    objective: string;
-    key_questions: string[];
-    search_strategy: string[];
-    success_criteria: string[];
-    writing_plan: string[];
-  };
   plan: {
     normalized_topic: string;
     search_keywords: string[];
@@ -166,17 +222,20 @@ export type ResearchReport = {
   full_text_documents: FullTextDocument[];
   insights: PaperInsight[];
   evidence_bundles: EvidenceBundle[];
-  claim_evidence_table: ClaimEvidenceRow[];
-  gap_report: GapReport;
   comparison: ComparisonSummary;
-  citation_verification: CitationVerificationReport;
   review_report: ReviewReport;
+  synthesis_reliability: SynthesisReliability | null;
   stage_history: StageTransition[];
   research_note: string;
   next_actions: string[];
+  debate_log: DebateRound[];
+  unit_syntheses: UnitSynthesis[];
+  fact_check_report: FactCheckReport | null;
+  contradictions?: Contradiction[];
+  llm_call_stats?: LLMCallStats;
 };
 
-// ============ 新增类型：SSE 事件 ============
+// ============ SSE 事件 ============
 
 export type SSEEvent = {
   event_type: string;
@@ -186,7 +245,7 @@ export type SSEEvent = {
   data?: Record<string, unknown>;
 };
 
-// ============ 新增类型：趋势分析 ============
+// ============ 趋势分析 ============
 
 export type TopicTrendPoint = {
   year: number;
@@ -213,7 +272,7 @@ export type TrendAnalysisResult = {
   cooling_directions: string[];
 };
 
-// ============ 新增类型：论文推荐 ============
+// ============ 论文推荐 ============
 
 export type PaperRecommendation = {
   paper_id: string;

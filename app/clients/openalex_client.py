@@ -55,6 +55,7 @@ class OpenAlexClient:
                     published=str(result.get("publication_date", "")),
                     pdf_url=self._extract_best_url(result),
                     source=PAPER_SOURCE_OPENALEX,
+                    affiliations=self._extract_affiliations(result),
                 )
             )
         return papers
@@ -78,6 +79,19 @@ class OpenAlexClient:
             if display_name:
                 authors.append(display_name)
         return authors
+
+    @staticmethod
+    def _extract_affiliations(result: Dict[str, Any]) -> List[str]:
+        """_extract_affiliations 提取去重后的机构列表。"""
+        affiliations: List[str] = []
+        seen: set = set()
+        for authorship in result.get("authorships", []) or []:
+            for institution in authorship.get("institutions", []) or []:
+                name = str(institution.get("display_name", "")).strip()
+                if name and name not in seen:
+                    affiliations.append(name)
+                    seen.add(name)
+        return affiliations
 
     @classmethod
     def _extract_summary(cls, result: Dict[str, Any]) -> str:

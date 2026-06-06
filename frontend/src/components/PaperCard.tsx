@@ -1,6 +1,8 @@
+import { useMemo, useRef } from "react";
 import { BookOpen, ExternalLink, Quote, Users } from "lucide-react";
 
 import type { Paper } from "@/types/research";
+import { useInView } from "@/hooks/useInView";
 
 function formatSourceLabel(source: string) {
   switch (source) {
@@ -12,21 +14,34 @@ function formatSourceLabel(source: string) {
   }
 }
 
+// LAZY_OBSERVER_OPTIONS 提前 200px 触发，提升滚动连续性
+const LAZY_OBSERVER_OPTIONS: IntersectionObserverInit = { rootMargin: "200px" };
+// CARD_MIN_HEIGHT 骨架占位高度，与正常渲染近似，避免布局跳动
+const CARD_MIN_HEIGHT = 220;
+
 export function PaperCard({ paper }: { paper: Paper }) {
-  const authorText = paper.authors.length > 0
-    ? paper.authors.length <= 3
+  // 1. 监听卡片是否进入视口（含 200px 预加载缓冲）
+  const cardRef = useRef<HTMLElement>(null);
+  const inView = useInView(cardRef, LAZY_OBSERVER_OPTIONS);
+
+  // 2. 作者信息派生
+  const authorText = useMemo(() => {
+    if (paper.authors.length === 0) return "Unknown authors";
+    return paper.authors.length <= 3
       ? paper.authors.join(", ")
-      : `${paper.authors.slice(0, 3).join(", ")} +${paper.authors.length - 3}`
-    : "Unknown authors";
+      : `${paper.authors.slice(0, 3).join(", ")} +${paper.authors.length - 3}`;
+  }, [paper.authors]);
 
   return (
     <article
+      ref={cardRef}
       style={{
         background: "#ffffff",
         border: "1px solid #e3e8ee",
         borderRadius: "12px",
         padding: "20px",
         transition: "box-shadow 0.15s ease",
+        minHeight: CARD_MIN_HEIGHT,
       }}
       onMouseEnter={(e) => {
         e.currentTarget.style.boxShadow = "0 4px 12px rgba(83,58,253,0.08)";
@@ -35,6 +50,19 @@ export function PaperCard({ paper }: { paper: Paper }) {
         e.currentTarget.style.boxShadow = "none";
       }}
     >
+      {inView ? (
+        <PaperCardBody paper={paper} authorText={authorText} />
+      ) : (
+        <PaperCardSkeleton />
+      )}
+    </article>
+  );
+}
+
+// PaperCardBody 真正展示论文标题、摘要、TLDR 等内容
+function PaperCardBody({ paper, authorText }: { paper: Paper; authorText: string }) {
+  return (
+    <>
       <div className="flex items-start justify-between gap-3">
         <div style={{ flex: 1, minWidth: 0 }}>
           <h4
@@ -143,7 +171,20 @@ export function PaperCard({ paper }: { paper: Paper }) {
           </span>
         )}
       </div>
-    </article>
+    </>
+  );
+}
+
+// PaperCardSkeleton 视口外占位骨架，保持卡片高度稳定
+function PaperCardSkeleton() {
+  return (
+    <div className="animate-pulse" aria-hidden>
+      <div style={{ height: "16px", width: "85%", background: "#eef2f7", borderRadius: "6px" }} />
+      <div style={{ height: "12px", width: "60%", background: "#eef2f7", borderRadius: "6px", marginTop: "12px" }} />
+      <div style={{ height: "10px", width: "100%", background: "#f1f5f9", borderRadius: "6px", marginTop: "16px" }} />
+      <div style={{ height: "10px", width: "92%", background: "#f1f5f9", borderRadius: "6px", marginTop: "8px" }} />
+      <div style={{ height: "10px", width: "80%", background: "#f1f5f9", borderRadius: "6px", marginTop: "8px" }} />
+    </div>
   );
 }
 

@@ -63,23 +63,29 @@ function formatVerdict(verdict: string) {
 
 // buildMarkdownContent 将研究报告整理为 Markdown 交付内容。
 function buildMarkdownContent(report: ResearchReport) {
-  const claimLines = report.claim_evidence_table.length
-    ? report.claim_evidence_table
+  const reliabilityLines = report.synthesis_reliability?.claims.length
+    ? report.synthesis_reliability.claims
         .map(
-          (row, index) =>
-            `${index + 1}. ${row.claim}\n   - 支持度：${formatSupportLevel(row.support_level)}\n   - 说明：${row.rationale || "暂无说明"}`,
+          (c, index) =>
+            `${index + 1}. ${c.claim}\n   - 可靠性：${c.reliability_level}（${c.reliability_score}）\n   - 说明：${c.reasoning || "暂无说明"}`,
         )
         .join("\n")
     : "- 暂无";
 
-  const citationLines = report.citation_verification.items.length
-    ? report.citation_verification.items
+  const debateLines = (report.debate_log ?? []).length
+    ? (report.debate_log ?? [])
         .map(
-          (item, index) =>
-            `${index + 1}. ${item.claim}\n   - 结果：${formatSupportLevel(item.support_level)}\n   - 说明：${item.reason || "暂无说明"}`,
+          (round) =>
+            `### 第 ${round.round_number} 轮\n- 质量分：${round.critic_quality_score}/10\n- 通过：${round.passed ? "是" : "否"}\n${
+              round.critic_weaknesses.length
+                ? round.critic_weaknesses.map((w) => `  - [${w.severity}] ${w.point}`).join("\n")
+                : "- 无弱点"
+            }${
+              round.revision_summary ? `\n- 修订说明：${round.revision_summary}` : ""
+            }`,
         )
-        .join("\n")
-    : "- 暂无";
+        .join("\n\n")
+    : "- 无辩论记录";
 
   const paperLines = report.insights.length
     ? report.insights
@@ -101,13 +107,26 @@ function buildMarkdownContent(report: ResearchReport) {
     `- 主要风险：${report.review_report.risks.join("；") || "暂无"}`,
     `- 修订建议：${report.review_report.revision_advice.join("；") || "暂无"}`,
     "",
+    "## Critic-Writer 辩论记录",
+    debateLines,
+    "",
+    "## 证据可靠性评估",
+    report.synthesis_reliability
+      ? [
+          `- 总体评分：${Math.round(report.synthesis_reliability.overall_score * 100)}%`,
+          `- 强：${report.synthesis_reliability.strong_count} / 中：${report.synthesis_reliability.moderate_count} / 弱：${report.synthesis_reliability.weak_count} / 孤立：${report.synthesis_reliability.isolated_count}`,
+          "",
+          reliabilityLines,
+        ].join("\n")
+      : "- 暂无",
+    "",
     "## 研究空白",
-    `- 是否建议补充：${report.gap_report.need_follow_up ? "是" : "否"}`,
-    `- 判断说明：${report.gap_report.reasoning || "暂无说明"}`,
+    `- 是否建议补充：${report.comparison.need_follow_up ? "是" : "否"}`,
+    `- 判断说明：${report.comparison.gap_reasoning || "暂无说明"}`,
     "- 待补充问题：",
-    formatList(report.gap_report.missing_aspects),
+    formatList(report.comparison.gaps),
     "- 建议检索方向：",
-    formatList(report.gap_report.follow_up_queries),
+    formatList(report.comparison.follow_up_queries),
     "",
     "## 结构化综述",
     report.comparison.overview,
@@ -130,15 +149,6 @@ function buildMarkdownContent(report: ResearchReport) {
     "",
     "## 后续事项",
     formatList(report.next_actions),
-    "",
-    "## 结论证据映射",
-    claimLines,
-    "",
-    "## 核验结果",
-    `- 总体支持率：${Math.round(report.citation_verification.overall_score * 100)}%`,
-    `- 已支持结论：${report.citation_verification.supported_count}`,
-    `- 未支持结论：${report.citation_verification.unsupported_count}`,
-    citationLines,
     "",
     "## 论文洞察",
     paperLines,

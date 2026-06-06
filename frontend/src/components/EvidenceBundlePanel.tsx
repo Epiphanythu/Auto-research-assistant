@@ -1,4 +1,4 @@
-import type { EvidenceBundle } from "@/types/research";
+import type { EvidenceBundle, Paper } from "@/types/research";
 
 // formatSourceLabel 统一证据来源展示文案
 function formatSourceLabel(source: string) {
@@ -20,9 +20,16 @@ function formatSourceLabel(source: string) {
 
 export function EvidenceBundlePanel({
   bundles,
+  papers = [],
 }: {
   bundles: EvidenceBundle[];
+  papers?: Paper[];
 }) {
+  // 1. paper_id → 标题映射，证据 chip 显示标题而非晦涩 ID
+  const titleMap = new Map<string, string>();
+  for (const p of papers) {
+    if (p && p.paper_id) titleMap.set(p.paper_id, p.title || p.paper_id);
+  }
   return (
     <section
       style={{
@@ -115,15 +122,20 @@ export function EvidenceBundlePanel({
               {bundle.supporting_paper_ids.map((paperId) => (
                 <span
                   key={paperId}
+                  title={paperId}
                   style={{
                     background: "#f6f9fc",
                     borderRadius: "9999px",
                     padding: "4px 12px",
                     fontSize: "12px",
-                    color: "#64748b",
+                    color: "#273951",
+                    maxWidth: "420px",
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
                   }}
                 >
-                  {paperId}
+                  {titleMap.get(paperId) ?? paperId}
                 </span>
               ))}
             </div>
@@ -158,22 +170,6 @@ export function EvidenceBundlePanel({
                       }}
                     >
                       {formatSourceLabel(evidence.source)}
-                    </span>
-                    <span
-                      style={{
-                        color: "#64748b",
-                        fontSize: "12px",
-                      }}
-                    >
-                      {evidence.section || "未标注章节"}
-                    </span>
-                    <span
-                      style={{
-                        color: "#64748b",
-                        fontSize: "12px",
-                      }}
-                    >
-                      第 {evidence.page || "-"} 页
                     </span>
                   </div>
                 </div>

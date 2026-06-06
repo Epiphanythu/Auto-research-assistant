@@ -12,11 +12,12 @@ import {
 import { ReportExportPanel } from "@/components/ReportExportPanel";
 import { ReportHistoryPanel } from "@/components/ReportHistoryPanel";
 import { ResearchForm } from "@/components/ResearchForm";
-import { StatusStrip } from "@/components/StatusStrip";
 import ProgressPanel from "@/components/ProgressPanel";
 import { useResearchStore } from "@/store/researchStore";
 import { useResearchStream } from "@/hooks/useEventSource";
 import type { ResearchReport, ResearchRequest } from "@/types/research";
+import { deleteArchivedReport, requestArchivedReport, requestReportHistory } from "@/utils/api";
+import { normalizeReport } from "@/utils/normalizeReport";
 
 export default function Home() {
   const {
@@ -40,22 +41,68 @@ export default function Home() {
   const stream = useResearchStream();
   const sseFinalData = useResearchStore((s) => s.sseFinalData);
   const sseError = useResearchStore((s) => s.sseError);
+  const sseEvents = useResearchStore((s) => s.sseEvents);
+  const sseConnected = useResearchStore((s) => s.sseConnected);
 
+  // 页面挂载：刷新后优先尝试用 task_id 续连后端事件流；失败则保留进度+轮询归档
   useEffect(() => {
+    // 1. 始终拉一次最新历史
     void fetchReportHistory();
-  }, [fetchReportHistory]);
+    // 2. 若上次任务还在跑且持久化了 task_id，则尝试续连
+    const { activeTaskId, activeTaskCursor } = useResearchStore.getState();
+    if (requestStatus === "loading" && activeTaskId && !sseConnected) {
+      void stream.resumeStream(activeTaskId, activeTaskCursor ?? sseEvents.length);
+    } else if (requestStatus === "loading" && sseEvents.length > 0 && !sseConnected) {
+      useResearchStore.setState({
+        sseConnected: false,
+        sseError: "页面刷新已中断 SSE 连接，正在等待后端归档报告...",
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
+  // 流中断后定时轮询归档报告：命中同主题报告则自动载入
+  useEffect(() => {
+    if (requestStatus !== "loading" || sseConnected) return;
+    if (sseEvents.length === 0) return;
+    const targetTopic = lastRequest?.topic ?? "";
+    const interval = window.setInterval(async () => {
+      try {
+        const history = await requestReportHistory();
+        if (history.length === 0) return;
+        // 1. 优先匹配同主题最新归档；无主题则取最新
+        const matched = targetTopic
+          ? history.find((item) => item.topic === targetTopic) ?? null
+          : history[0];
+        if (!matched) return;
+        const archived = await requestArchivedReport(matched.report_id);
+        useResearchStore.setState({
+          report: normalizeReport(archived),
+          activeReportId: matched.report_id,
+          requestStatus: "success",
+          lastRequest: archived.request,
+          sseEvents: [],
+          sseError: null,
+        });
+      } catch {
+        // 静默：下次轮询继续尝试
+      }
+    }, 5000);
+    return () => window.clearInterval(interval);
+  }, [requestStatus, sseConnected, sseEvents.length, lastRequest]);
+
+  // Handle SSE stream completing with final report
   useEffect(() => {
     if (sseFinalData && requestStatus === "loading") {
       try {
-        const report = sseFinalData as ResearchReport;
+        const report = normalizeReport(sseFinalData as Parameters<typeof normalizeReport>[0]);
         useResearchStore.setState({
           report,
           activeReportId: null,
           requestStatus: "success",
           lastRequest: report.request,
         });
-        fetchReportHistory();
+        void fetchReportHistory();
       } catch {
         // ignore parse errors
       }
@@ -84,9 +131,6 @@ export default function Home() {
     });
     stream.startStream(payload);
   };
-
-  const sseEvents = useResearchStore((s) => s.sseEvents);
-  const sseConnected = useResearchStore((s) => s.sseConnected);
 
   const showProgress = (requestStatus === "loading" || sseConnected) && sseEvents.length > 0;
 
@@ -126,7 +170,7 @@ export default function Home() {
             <div className="mt-8 flex flex-wrap gap-3">
               <FeatureBadge
                 icon={<Orbit className="h-3.5 w-3.5" />}
-                text="5节点 LangGraph"
+                text="6节点 LangGraph"
               />
               <FeatureBadge
                 icon={<ShieldEllipsis className="h-3.5 w-3.5" />}
@@ -155,10 +199,10 @@ export default function Home() {
                 value={report ? "已生成" : "尚未生成"}
               />
               <OverviewRow
-                label="核验分数"
+                label="可靠性评分"
                 value={
-                  report
-                    ? `${Math.round(report.citation_verification.overall_score * 100)}%`
+                  report?.synthesis_reliability
+                    ? `${Math.round(report.synthesis_reliability.overall_score * 100)}%`
                     : "-"
                 }
               />
@@ -192,11 +236,33 @@ export default function Home() {
       {/* ─── SSE Progress Panel ─── */}
       {showProgress && (
         <section className="rounded-2xl border border-[#e3e8ee] bg-white p-6 shadow-sm">
-          <div className="mb-4 h-1.5 w-full overflow-hidden rounded-full bg-[#f6f9fc]">
-            <div
-              className="h-full rounded-full bg-[#533afd] transition-all duration-500"
-              style={{ width: `${Math.min(stream.progress * 100, 100)}%` }}
-            />
+          <div className="mb-3 flex items-center justify-between">
+            <div className="flex-1 h-1.5 overflow-hidden rounded-full bg-[#f6f9fc]">
+              <div
+                className="h-full rounded-full bg-[#533afd] transition-all duration-500"
+                style={{ width: `${Math.min(stream.progress * 100, 100)}%` }}
+              />
+            </div>
+            {sseConnected ? (
+              <button
+                type="button"
+                onClick={() => {
+                  void stream.cancelStream();
+                  useResearchStore.setState({
+                    requestStatus: "idle",
+                    errorState: {
+                      title: "研究任务已取消",
+                      detail: "已请求后端取消当前流水线。",
+                      suggestion: "可重新提交新的研究任务。",
+                    },
+                  });
+                }}
+                className="ml-3 inline-flex items-center gap-1 rounded-[9999px] border border-[#ea2261]/30 bg-white px-3 py-1 text-[11px] font-medium text-[#ea2261] transition hover:bg-[#fff5f7]"
+              >
+                <X className="h-3 w-3" />
+                取消任务
+              </button>
+            ) : null}
           </div>
           <ProgressPanel
             events={sseEvents}
@@ -253,18 +319,17 @@ export default function Home() {
           compareSelection={compareSelection}
           onToggleCompare={toggleCompareSelection}
           onClearCompare={clearCompareSelection}
+          onDelete={async (reportId) => {
+            await deleteArchivedReport(reportId);
+            await fetchReportHistory();
+            const { report, activeReportId } = useResearchStore.getState();
+            if (report && activeReportId === reportId) {
+              useResearchStore.setState({ report: null, activeReportId: null, requestStatus: "idle" });
+            }
+          }}
         />
       </section>
 
-      {/* ─── Status Strip ─── */}
-      <StatusStrip
-        paperCount={report?.papers.length ?? 0}
-        evidenceBundleCount={report?.evidence_bundles.length ?? 0}
-        claimCount={report?.claim_evidence_table.length ?? 0}
-        supportScore={report?.citation_verification.overall_score ?? 0}
-        unsupportedCount={report?.citation_verification.unsupported_count ?? 0}
-        stageCount={report?.stage_history.length ?? 0}
-      />
     </div>
   );
 }

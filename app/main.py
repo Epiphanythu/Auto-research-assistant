@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -13,7 +14,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 from fastapi import FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
 from app.api_error import APIError
 from app.config import get_settings
@@ -22,11 +23,26 @@ from app.models.research_models import (
     ReportArchiveSummary,
     ResearchReport,
     ResearchRequest,
+    SSEEvent,
     TrendAnalysisResult,
     PaperRecommendation,
 )
+from app.constant.report_constant import (
+    EXPORT_FORMAT_JSON,
+    EXPORT_FORMAT_MARKDOWN,
+    JSON_MEDIA_TYPE,
+    MARKDOWN_MEDIA_TYPE,
+    SUPPORTED_EXPORT_FORMATS,
+)
 from app.services.analysis.recommendation_service import RecommendationService
+from app.services.analysis.author_graph_service import AuthorGraphService
 from app.services.infrastructure.report_archive_service import ReportArchiveService
+from app.services.infrastructure.report_export_service import ReportExportService
+from app.services.infrastructure.task_registry import (
+    ResearchTask,
+    get_task_registry,
+    set_current_task,
+)
 from app.services.core.report_service import ReportService
 from app.services.analysis.trend_analysis_service import TrendAnalysisService
 from app.middleware.rate_limit import RateLimitMiddleware
@@ -36,8 +52,10 @@ setup_logging()
 settings = get_settings()
 report_service = ReportService()
 report_archive_service = ReportArchiveService()
+report_export_service = ReportExportService()
 trend_analysis_service = TrendAnalysisService()
 recommendation_service = RecommendationService()
+author_graph_service = AuthorGraphService()
 
 app = FastAPI(title=settings.get_app_name(), version="2.0.0")
 
@@ -51,7 +69,12 @@ app.add_middleware(
 )
 
 # Rate limiting for research endpoints
-app.add_middleware(RateLimitMiddleware, max_requests=3, window_seconds=60)
+app.add_middleware(
+    RateLimitMiddleware,
+    max_requests=3,
+    window_seconds=60,
+    max_in_flight=settings.get_research_max_in_flight(),
+)
 
 logger = logging.getLogger(__name__)
 
@@ -125,40 +148,136 @@ def generate_research_report(request: ResearchRequest) -> ResearchReport:
 
 @app.post("/api/v1/research/stream")
 def stream_research_report(request: ResearchRequest) -> StreamingResponse:
-    """stream_research_report SSE 流式生成科研报告，实时推送阶段进度。"""
+    """stream_research_report 创建研究任务并 SSE 推送进度（首端连接）。"""
     logger.info(
         "SSE request received, topic=%s, max_papers=%s",
         request.get_topic(), request.get_max_papers(),
     )
+    # 1. 在注册表中创建任务，并启动后台执行线程
+    task = get_task_registry().create_task(request)
+    _start_research_worker(task)
+    return _build_task_stream_response(task, cursor=0, include_task_meta=True)
+
+
+@app.get("/api/v1/research/tasks/{task_id}/stream")
+def resume_research_stream(task_id: str, cursor: int = Query(default=0, ge=0)) -> StreamingResponse:
+    """resume_research_stream 续连已有研究任务的 SSE 流，从游标继续推送。"""
+    registry = get_task_registry()
+    task = registry.get_task(task_id)
+    if task is None:
+        raise APIError(
+            status_code=404,
+            error_code="task_not_found",
+            title="任务不存在或已过期",
+            detail=f"未找到 task_id={task_id}",
+            suggestion="请重新发起研究任务。",
+        )
+    return _build_task_stream_response(task, cursor=cursor, include_task_meta=False)
+
+
+@app.get("/api/v1/research/tasks/{task_id}")
+def get_research_task(task_id: str) -> dict:
+    """get_research_task 查询任务当前状态摘要（不订阅事件）。"""
+    task = get_task_registry().get_task(task_id)
+    if task is None:
+        raise APIError(
+            status_code=404,
+            error_code="task_not_found",
+            title="任务不存在或已过期",
+            detail=f"未找到 task_id={task_id}",
+            suggestion="请重新发起研究任务。",
+        )
+    return {
+        "task_id": task.task_id,
+        "topic": task.topic,
+        "status": task.get_status(),
+        "event_count": len(task.events),
+        "error_message": task.error_message,
+    }
+
+
+@app.delete("/api/v1/research/tasks/{task_id}")
+def cancel_research_task(task_id: str) -> dict:
+    """cancel_research_task 请求取消正在运行的研究任务。"""
+    task = get_task_registry().get_task(task_id)
+    if task is None:
+        raise APIError(
+            status_code=404,
+            error_code="task_not_found",
+            title="任务不存在或已过期",
+            detail=f"未找到 task_id={task_id}",
+            suggestion="任务可能已结束并被清理。",
+        )
+    if task.is_finished():
+        return {"task_id": task_id, "status": task.get_status(), "cancelled": False}
+    task.request_cancel()
+    return {"task_id": task_id, "status": task.get_status(), "cancelled": True}
+
+
+@app.post("/api/v1/research/replay")
+def replay_research_report(payload: dict) -> StreamingResponse:
+    """replay_research_report 基于归档报告以 SSE 形式回放合成事件。"""
+    # 1. 校验入参，必须包含 report_id
+    report_id = str(payload.get("report_id", "")).strip()
+    if not report_id:
+        raise APIError(
+            status_code=400,
+            error_code="replay_report_id_missing",
+            title="缺少回放报告编号",
+            detail="请求体必须包含 report_id。",
+            suggestion="请在 POST body 中提供需要回放的 report_id。",
+        )
+    # 2. 直接通过 ReportService 的 replay 通道生成合成事件流
+    archived = report_archive_service.get_report(report_id)
+    request = archived.request
 
     def event_generator():
-        try:
-            for event in report_service.generate_report_stream(request):
-                event_data = event.model_dump()
-                if event.event_type == "final_report" and event.data:
-                    # 归档
-                    try:
-                        report = ResearchReport(**event.data)
-                        _try_archive(report)
-                    except Exception:
-                        pass
-                yield f"data: {json.dumps(event_data, ensure_ascii=False, default=str)}\n\n"
-        except APIError as error:
-            error_event = {
-                "event_type": "error",
+        for event in report_service.generate_report_stream(request, replay_report_id=report_id):
+            event_data = event.model_dump()
+            yield f"data: {json.dumps(event_data, ensure_ascii=False, default=str)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+def _build_task_stream_response(
+    task: ResearchTask,
+    cursor: int,
+    include_task_meta: bool,
+) -> StreamingResponse:
+    """_build_task_stream_response 将任务事件流封装为 SSE 响应。"""
+    registry = get_task_registry()
+
+    def event_generator():
+        # 1. 首条 meta 事件，便于前端拿到 task_id 持久化以备刷新续连
+        if include_task_meta:
+            meta = {
+                "event_type": "task_created",
                 "stage": "",
-                "message": error.title,
-                "progress": 0,
-                "data": error.to_dict(),
+                "message": "研究任务已创建",
+                "progress": 0.0,
+                "data": {"task_id": task.task_id, "topic": task.topic},
             }
-            yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
-        except Exception as error:
+            yield f"data: {json.dumps(meta, ensure_ascii=False)}\n\n"
+        # 2. 持续推送注册表中的事件，直到任务结束
+        for _, event in registry.stream_events(task.task_id, cursor=cursor, wait_seconds=15.0):
+            event_data = event.model_dump()
+            yield f"data: {json.dumps(event_data, ensure_ascii=False, default=str)}\n\n"
+        # 3. 末尾若任务异常，补一条 error
+        if task.get_status() == "error" and task.error_message:
             error_event = {
                 "event_type": "error",
                 "stage": "",
-                "message": "服务内部错误",
-                "progress": 0,
-                "data": {"detail": str(error)},
+                "message": "研究流程执行失败",
+                "progress": 0.0,
+                "data": {"detail": task.error_message},
             }
             yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
 
@@ -173,6 +292,53 @@ def stream_research_report(request: ResearchRequest) -> StreamingResponse:
     )
 
 
+def _start_research_worker(task: ResearchTask) -> None:
+    """_start_research_worker 在后台线程驱动 graph，并把事件追加到任务注册表。"""
+
+    def _worker() -> None:
+        task.mark_status("running")
+        set_current_task(task)
+        try:
+            for event in report_service.generate_report_stream(task.request):
+                if task.is_cancel_requested():
+                    cancel_event = SSEEvent(
+                        event_type="error", stage="",
+                        message="研究任务已取消", progress=0.0,
+                        data={"detail": "用户主动取消"},
+                    )
+                    task.append_event(cancel_event)
+                    task.mark_status("cancelled")
+                    return
+                task.append_event(event)
+                if event.event_type == "final_report" and event.data:
+                    try:
+                        report = ResearchReport(**event.data)
+                        _try_archive(report)
+                    except Exception:  # 归档失败不影响主流程
+                        pass
+            task.mark_status("done")
+        except APIError as error:
+            task.append_event(SSEEvent(
+                event_type="error", stage="",
+                message=error.title, progress=0.0,
+                data=error.to_dict(),
+            ))
+            task.mark_status("error", error_message=error.detail)
+        except Exception as error:  # pragma: no cover - 兜底
+            logger.exception("research task crashed, task_id=%s", task.task_id)
+            task.append_event(SSEEvent(
+                event_type="error", stage="",
+                message="服务内部错误", progress=0.0,
+                data={"detail": str(error)},
+            ))
+            task.mark_status("error", error_message=str(error))
+        finally:
+            # 清理 thread-local 任务上下文，避免线程被复用时串到下一次任务
+            set_current_task(None)
+
+    threading.Thread(target=_worker, name=f"research-{task.task_id[:8]}", daemon=True).start()
+
+
 @app.get("/api/v1/reports", response_model=list[ReportArchiveSummary])
 def list_archived_reports(
     limit: int = Query(default=12, ge=1, le=50),
@@ -185,6 +351,71 @@ def list_archived_reports(
 def get_archived_report(report_id: str) -> ResearchReport:
     """get_archived_report 按编号获取历史报告。"""
     return report_archive_service.get_report(report_id)
+
+
+@app.get("/api/v1/reports/{report_id}/export")
+def export_archived_report(
+    report_id: str,
+    format: str = Query(default=EXPORT_FORMAT_MARKDOWN, description="导出格式：md / json"),
+):
+    """export_archived_report 按格式导出历史报告（Markdown / JSON）。"""
+    # 1. 校验导出格式
+    fmt = format.lower()
+    if fmt not in SUPPORTED_EXPORT_FORMATS:
+        raise APIError(
+            status_code=400,
+            error_code="export_format_unsupported",
+            title="导出格式不支持",
+            detail=f"暂不支持的导出格式：{format}",
+            suggestion=f"请使用受支持的格式：{', '.join(SUPPORTED_EXPORT_FORMATS)}",
+        )
+    # 2. 读取归档报告
+    report = report_archive_service.get_report(report_id)
+    # 3. 渲染并以下载形式返回
+    if fmt == EXPORT_FORMAT_MARKDOWN:
+        content = report_export_service.render_markdown(report)
+        media_type = MARKDOWN_MEDIA_TYPE
+        filename = report_export_service.build_filename(report, EXPORT_FORMAT_MARKDOWN)
+    else:
+        content = report_export_service.render_json(report)
+        media_type = JSON_MEDIA_TYPE
+        filename = report_export_service.build_filename(report, EXPORT_FORMAT_JSON)
+    return PlainTextResponse(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.delete("/api/v1/reports/{report_id}")
+def delete_archived_report(report_id: str) -> dict:
+    """delete_archived_report 删除指定历史报告。"""
+    report_archive_service.delete_report(report_id)
+    return {"status": "ok", "report_id": report_id}
+
+
+@app.get("/api/v1/research/reports/{report_id}/explainability")
+def get_report_explainability(report_id: str) -> dict:
+    """get_report_explainability 返回报告的可解释性面板字段。"""
+    # 1. 加载完整归档报告
+    report = report_archive_service.get_report(report_id)
+    # 2. 汇总事实校验三档计数
+    fact_check_summary = {"total": 0, "supported": 0, "unsupported": 0}
+    if report.fact_check_report is not None:
+        fact_check_summary = {
+            "total": report.fact_check_report.total_claims,
+            "supported": report.fact_check_report.supported_count,
+            "unsupported": report.fact_check_report.unsupported_count,
+        }
+    # 3. 组装响应字段
+    return {
+        "report_id": report_id,
+        "topic": report.request.topic,
+        "llm_call_stats": report.llm_call_stats or {},
+        "stage_history": [stage.model_dump() for stage in report.stage_history],
+        "fact_check_summary": fact_check_summary,
+        "contradiction_count": len(report.contradictions or []),
+    }
 
 
 # ============ 趋势分析 API ============
@@ -219,6 +450,31 @@ def recommend_for_topic(
     """recommend_for_topic 基于研究主题推荐论文。"""
     logger.info("Topic recommendation request, topic=%s", topic)
     return recommendation_service.recommend_for_topic(topic, existing_papers=[], limit=limit)
+
+
+# ============ 作者机构图谱 API ============
+
+@app.get("/api/v1/research/author-graph")
+def get_author_graph(topic: str = Query(..., description="研究主题")) -> dict:
+    """get_author_graph 基于最新归档报告构建作者-机构图谱。"""
+    # 1. 在归档列表中按主题精确匹配最近一份报告
+    target_report_id = ""
+    summaries = report_archive_service.list_reports(limit=50)
+    for summary in summaries:
+        if summary.topic.strip() == topic.strip():
+            target_report_id = summary.report_id
+            break
+    if not target_report_id:
+        raise APIError(
+            status_code=404,
+            error_code="archived_report_not_found",
+            title="未找到指定主题的归档报告",
+            detail=f"未找到主题为「{topic}」的已归档报告。",
+            suggestion="请先针对该主题生成并归档研究报告，或检查主题拼写。",
+        )
+    # 2. 加载完整报告并构建图谱
+    report = report_archive_service.get_report(target_report_id)
+    return author_graph_service.build(report.papers)
 
 
 # ============ 内部工具 ============

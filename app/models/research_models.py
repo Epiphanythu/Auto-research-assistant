@@ -53,28 +53,6 @@ class ResearchPlan(BaseModel):
     output_sections: List[str]
 
 
-class ClarificationResult(BaseModel):
-    """ClarificationResult 研究问题澄清结果。"""
-
-    clarified_topic: str
-    research_goal: str
-    scope: str
-    constraints: List[str] = Field(default_factory=list)
-    deliverable: str = "研究报告"
-    output_language: str = "中文"
-
-
-class ResearchBrief(BaseModel):
-    """ResearchBrief 研究任务简报。"""
-
-    topic: str
-    objective: str
-    key_questions: List[str] = Field(default_factory=list)
-    search_strategy: List[str] = Field(default_factory=list)
-    success_criteria: List[str] = Field(default_factory=list)
-    writing_plan: List[str] = Field(default_factory=list)
-
-
 class ResearchUnit(BaseModel):
     """ResearchUnit 并行研究单元。"""
 
@@ -99,6 +77,7 @@ class Paper(BaseModel):
     citation_count: int = 0
     tldr: str = ""
     doi: str = ""
+    affiliations: List[str] = Field(default_factory=list)
 
     def get_summary(self) -> str:
         """get_summary 获取摘要。"""
@@ -116,6 +95,7 @@ class EvidenceSnippet(BaseModel):
     reason: str
     source: str = FULL_TEXT_SOURCE_ABSTRACT
     section: str = ""
+    section_kind: str = ""
     page: int = 0
 
 
@@ -124,6 +104,7 @@ class FullTextChunk(BaseModel):
 
     text: str
     section: str = ""
+    section_kind: str = "other"  # abstract/introduction/related_work/method/experiment/result/discussion/conclusion/other
     page: int = 0
 
 
@@ -134,6 +115,7 @@ class FullTextDocument(BaseModel):
     source: str = ""
     page_count: int = 0
     chunks: List[FullTextChunk] = Field(default_factory=list)
+    tables: List["QuantitativeResult"] = Field(default_factory=list)
 
 
 class EvidenceBundle(BaseModel):
@@ -144,6 +126,20 @@ class EvidenceBundle(BaseModel):
     synthesized_findings: str
     supporting_paper_ids: List[str] = Field(default_factory=list)
     evidence: List[EvidenceSnippet] = Field(default_factory=list)
+    confidence: float = 0.5
+
+
+class UnitSynthesis(BaseModel):
+    """UnitSynthesis 单个研究单元的小节级综合结果（Phase 2 引入）。"""
+
+    unit_id: str
+    question: str
+    summary: str = ""                            # 该研究问题的综合回答（一段中文）
+    key_methods: List[str] = Field(default_factory=list)   # 与此问题相关的核心方法
+    consensus: List[str] = Field(default_factory=list)     # 各论文达成共识的结论
+    disagreements: List[str] = Field(default_factory=list) # 各论文之间的矛盾或差异
+    supporting_paper_ids: List[str] = Field(default_factory=list)
+    open_questions: List[str] = Field(default_factory=list) # 尚未解决的问题
     confidence: float = 0.5
 
 
@@ -213,6 +209,68 @@ class PaperInsight(BaseModel):
     quality_metrics: Optional[PaperQualityMetrics] = None
 
 
+# ─── Multi-Agent Debate ───
+
+
+class CriticWeakness(BaseModel):
+    """CriticWeakness Critic 发现的弱点。"""
+
+    point: str
+    severity: str = "medium"  # high / medium / low
+    suggestion: str = ""
+
+
+class DebateRound(BaseModel):
+    """DebateRound 一轮辩论。"""
+
+    round_number: int = 1
+    critic_weaknesses: List[CriticWeakness] = Field(default_factory=list)
+    critic_quality_score: int = 0
+    passed: bool = False
+    revision_summary: str = ""
+
+
+# ─── Fact Check (Phase 3 引入) ───
+
+
+class ClaimFactCheck(BaseModel):
+    """ClaimFactCheck research_note 中单个论断的事实校验结果。"""
+
+    claim: str                                      # 论断原文
+    supported: bool = False                          # 是否找到证据支撑
+    support_level: str = "unsupported"               # strong / moderate / weak / unsupported
+    matched_paper_ids: List[str] = Field(default_factory=list)
+    matched_evidence: List[EvidenceSnippet] = Field(default_factory=list)
+    keyword_overlap_score: float = 0.0               # 0~1 的关键词重叠分
+    reason: str = ""                                  # 评估理由
+    nli_verdict: Optional[str] = None                # LLM NLI 二次校验：entailment / contradiction / neutral
+    nli_rationale: str = ""                          # NLI 校验给出的简短说明
+
+
+class FactCheckReport(BaseModel):
+    """FactCheckReport research_note 整体的事实校验报告。"""
+
+    total_claims: int = 0
+    supported_count: int = 0
+    weak_count: int = 0
+    unsupported_count: int = 0
+    overall_score: float = 0.0                       # supported / total
+    items: List[ClaimFactCheck] = Field(default_factory=list)
+    flagged_claims: List[str] = Field(default_factory=list)  # 严重缺乏证据支撑的论断列表
+    nli_verified_count: int = 0                      # 通过 LLM NLI 二次校验的弱论断数
+
+
+class Contradiction(BaseModel):
+    """Contradiction 跨论文论断矛盾对。"""
+
+    topic: str = ""                                   # 简短主题描述
+    claim_a: str = ""                                 # 论断 A 原文
+    claim_b: str = ""                                 # 论断 B 原文
+    paper_id_a: str = ""                              # 论断 A 来源论文 ID
+    paper_id_b: str = ""                              # 论断 B 来源论文 ID
+    rationale: str = ""                               # 矛盾解释
+
+
 # ─── Legacy models (kept for internal pipeline compatibility) ───
 
 
@@ -247,15 +305,6 @@ class CitationVerificationReport(BaseModel):
     items: List[CitationVerificationItem] = Field(default_factory=list)
 
 
-class GapReport(BaseModel):
-    """GapReport 研究空白与补洞建议。"""
-
-    need_follow_up: bool = False
-    missing_aspects: List[str] = Field(default_factory=list)
-    follow_up_queries: List[str] = Field(default_factory=list)
-    reasoning: str = ""
-
-
 class InnovationIdea(BaseModel):
     """InnovationIdea 创新建议。"""
 
@@ -265,13 +314,16 @@ class InnovationIdea(BaseModel):
 
 
 class ComparisonSummary(BaseModel):
-    """ComparisonSummary 多论文比较结果。"""
+    """ComparisonSummary 多论文比较结果（含研究空白）。"""
 
     dimensions: List[str] = Field(default_factory=lambda: list(DEFAULT_COMPARISON_DIMENSIONS))
     overview: str
     trends: List[str] = Field(default_factory=list)
     gaps: List[str] = Field(default_factory=list)
     ideas: List[InnovationIdea] = Field(default_factory=list)
+    need_follow_up: bool = False
+    follow_up_queries: List[str] = Field(default_factory=list)
+    gap_reasoning: str = ""
 
 
 class ResearchMemory(BaseModel):
@@ -305,8 +357,6 @@ class ResearchReport(BaseModel):
     """ResearchReport 最终调研报告。"""
 
     request: ResearchRequest
-    clarification: ClarificationResult
-    brief: ResearchBrief
     plan: ResearchPlan
     memory: Optional[ResearchMemory] = None
     research_units: List[ResearchUnit] = Field(default_factory=list)
@@ -314,13 +364,17 @@ class ResearchReport(BaseModel):
     full_text_documents: List[FullTextDocument] = Field(default_factory=list)
     insights: List[PaperInsight] = Field(default_factory=list)
     evidence_bundles: List[EvidenceBundle] = Field(default_factory=list)
-    gap_report: GapReport
+    unit_syntheses: List[UnitSynthesis] = Field(default_factory=list)
     comparison: ComparisonSummary
     review_report: ReviewReport
     synthesis_reliability: Optional[SynthesisReliability] = None
     stage_history: List[StageTransition] = Field(default_factory=list)
     research_note: str
     next_actions: List[str] = Field(default_factory=list)
+    debate_log: List[DebateRound] = Field(default_factory=list)
+    fact_check_report: Optional["FactCheckReport"] = None
+    contradictions: List[Contradiction] = Field(default_factory=list)
+    llm_call_stats: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ReportArchiveSummary(BaseModel):

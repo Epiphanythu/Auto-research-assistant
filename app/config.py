@@ -6,6 +6,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
+from app.constant.llm_constant import DEFAULT_LLM_CACHE_DIR
 from app.constant.paper_constant import (
     DEFAULT_LLM_MODEL,
     DEFAULT_MAX_PAPER_COUNT,
@@ -35,6 +36,22 @@ class Settings:
         self.llm_base_url = os.getenv("LLM_BASE_URL", "").strip()
         self.llm_api_key = os.getenv("LLM_API_KEY", "").strip()
         self.llm_model = os.getenv("LLM_MODEL", DEFAULT_LLM_MODEL).strip()
+        # LLM 磁盘缓存：默认关闭，开发期可设 LLM_CACHE_ENABLED=1 大幅减少 token 消耗
+        self.llm_cache_enabled = os.getenv("LLM_CACHE_ENABLED", "").strip().lower() in (
+            "1", "true", "yes", "on",
+        )
+        self.llm_cache_dir = os.getenv("LLM_CACHE_DIR", DEFAULT_LLM_CACHE_DIR)
+        # 日志文件路径：为空表示不落盘（仅 stdout）
+        self.log_file_path = os.getenv("LOG_FILE_PATH", "logs/app.log").strip()
+        self.log_file_max_bytes = int(os.getenv("LOG_FILE_MAX_BYTES", "10485760"))  # 10MB
+        self.log_file_backup_count = int(os.getenv("LOG_FILE_BACKUP_COUNT", "5"))
+        # 单 IP 同时进行的研究任务上限
+        self.research_max_in_flight = int(os.getenv("RESEARCH_MAX_IN_FLIGHT", "2"))
+        # Replay 模式：开启后，研究流不再实际跑 LangGraph，而是从归档中回放
+        self.replay_mode = os.getenv("REPLAY_MODE", "").strip().lower() in (
+            "1", "true", "yes", "on",
+        )
+        self.replay_report_id = os.getenv("REPLAY_REPORT_ID", "").strip()
 
     def get_app_name(self) -> str:
         """get_app_name 获取应用名称。"""
@@ -75,6 +92,38 @@ class Settings:
     def is_llm_enabled(self) -> bool:
         """is_llm_enabled 判断是否开启外部大模型。"""
         return bool(self.get_llm_base_url() and self.get_llm_api_key())
+
+    def is_llm_cache_enabled(self) -> bool:
+        """is_llm_cache_enabled 判断是否启用 LLM 磁盘缓存。"""
+        return self.llm_cache_enabled
+
+    def get_llm_cache_dir(self) -> Path:
+        """get_llm_cache_dir 获取 LLM 缓存目录。"""
+        return Path(self.llm_cache_dir)
+
+    def get_log_file_path(self) -> str:
+        """get_log_file_path 获取日志落盘路径，空字符串表示禁用。"""
+        return self.log_file_path
+
+    def get_log_file_max_bytes(self) -> int:
+        """get_log_file_max_bytes 获取单个日志文件体积上限（字节）。"""
+        return self.log_file_max_bytes
+
+    def get_log_file_backup_count(self) -> int:
+        """get_log_file_backup_count 获取日志滚动保留文件数。"""
+        return self.log_file_backup_count
+
+    def get_research_max_in_flight(self) -> int:
+        """get_research_max_in_flight 获取单 IP 并行任务上限。"""
+        return self.research_max_in_flight
+
+    def is_replay_mode_enabled(self) -> bool:
+        """is_replay_mode_enabled 判断是否开启 Replay 模式。"""
+        return self.replay_mode
+
+    def get_replay_report_id(self) -> str:
+        """get_replay_report_id 获取 Replay 默认回放的报告编号。"""
+        return self.replay_report_id
 
 
 @lru_cache(maxsize=1)

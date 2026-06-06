@@ -1,6 +1,19 @@
-import { AlertTriangle, CheckCircle2, FileText, Lightbulb, Quote, SearchCode, ShieldCheck } from "lucide-react";
+import { useMemo, useState } from "react";
+import { AlertTriangle, CheckCircle2, FileText, Lightbulb, MessageSquare, Quote, ScanSearch, SearchCode, ShieldCheck } from "lucide-react";
+import { marked } from "marked";
 
-import type { ClaimEvidenceRow, CitationVerificationReport, ComparisonSummary, GapReport, PaperInsight, ReviewReport, StageTransition } from "@/types/research";
+import type { ClaimFactCheck, ComparisonSummary, Contradiction, DebateRound, FactCheckReport, Paper, PaperInsight, ReviewReport, StageTransition, SynthesisReliability, UnitSynthesis } from "@/types/research";
+
+// sanitizeMarkdownHTML 简单清洗 marked 渲染结果，剔除 <script> 标签并去除常见 on* 内联事件
+function sanitizeMarkdownHTML(raw: string): string {
+  // 1. 移除 <script>...</script> 块（含异常闭合）
+  let out = raw.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
+  out = out.replace(/<script\b[^>]*>/gi, "");
+  // 2. 移除内联事件属性，避免 onerror/onclick 等触发执行
+  out = out.replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, "");
+  out = out.replace(/\son[a-z]+\s*=\s*'[^']*'/gi, "");
+  return out;
+}
 
 export function OverviewPanel({
   overview,
@@ -9,7 +22,14 @@ export function OverviewPanel({
   ideas,
   researchNote,
   nextActions,
-}: ComparisonSummary & { researchNote: string; nextActions: string[] }) {
+}: {
+  overview: string;
+  trends: string[];
+  gaps: string[];
+  ideas: ComparisonSummary["ideas"];
+  researchNote: string;
+  nextActions: string[];
+}) {
   return (
     <div className="grid gap-4 xl:grid-cols-[1.45fr_1fr]">
       <section style={{ background: "#ffffff", border: "1px solid #e3e8ee", borderRadius: "12px", padding: "24px" }}>
@@ -37,7 +57,7 @@ export function OverviewPanel({
           Research Note
         </p>
         <h3 style={{ color: "#0d253d", fontSize: "24px", fontWeight: 300, marginTop: "8px" }}>研究笔记</h3>
-        <p style={{ color: "#64748b", fontSize: "14px", lineHeight: 1.75, marginTop: "16px" }}>{researchNote}</p>
+        <ResearchNoteView researchNote={researchNote} />
 
         <div className="mt-6">
           <p style={{ color: "#64748b", fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.2em" }}>
@@ -74,6 +94,76 @@ export function OverviewPanel({
         </div>
       </section>
     </div>
+  );
+}
+
+// ResearchNoteView 提供 Markdown 渲染 / 原文双 Tab，默认渲染 marked 解析后的 HTML
+function ResearchNoteView({ researchNote }: { researchNote: string }) {
+  // 1. 本地 Tab 状态：渲染（默认）/ 原文
+  const [mode, setMode] = useState<"rendered" | "raw">("rendered");
+  // 2. 解析 Markdown 并清洗 <script> 等危险节点；marked.parse 在同步模式下返回 string
+  const html = useMemo(() => {
+    const parsed = marked.parse(researchNote ?? "", { async: false }) as string;
+    return sanitizeMarkdownHTML(parsed);
+  }, [researchNote]);
+
+  return (
+    <div style={{ marginTop: "16px" }}>
+      {/* 1. Tab 切换栏 */}
+      <div className="flex items-center gap-2" style={{ marginBottom: "12px" }}>
+        <TabButton active={mode === "rendered"} onClick={() => setMode("rendered")} label="渲染" />
+        <TabButton active={mode === "raw"} onClick={() => setMode("raw")} label="原文" />
+      </div>
+      {/* 2. 渲染模式：注入清洗后的 HTML，prose 样式仅作基础排版 */}
+      {mode === "rendered" ? (
+        <div
+          className="prose prose-sm max-w-none"
+          style={{ color: "#273951", fontSize: "14px", lineHeight: 1.75 }}
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+      ) : (
+        <pre
+          style={{
+            color: "#64748b",
+            fontSize: "13px",
+            lineHeight: 1.7,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            background: "#f6f9fc",
+            border: "1px solid #e3e8ee",
+            borderRadius: "12px",
+            padding: "12px 16px",
+            margin: 0,
+            fontFamily: "inherit",
+          }}
+        >
+          {researchNote}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+function TabButton({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        padding: "4px 12px",
+        borderRadius: "9999px",
+        fontSize: "12px",
+        fontWeight: 500,
+        border: "1px solid",
+        cursor: "pointer",
+        background: active ? "#533afd" : "#ffffff",
+        color: active ? "#ffffff" : "#64748b",
+        borderColor: active ? "#533afd" : "#e3e8ee",
+        transition: "all 0.15s ease",
+      }}
+    >
+      {label}
+    </button>
   );
 }
 
@@ -179,9 +269,9 @@ export function ReviewDecisionPanel({
 }
 
 export function GapReportPanel({
-  gapReport,
+  comparison,
 }: {
-  gapReport: GapReport;
+  comparison: ComparisonSummary;
 }) {
   return (
     <section style={{ background: "#ffffff", border: "1px solid #e3e8ee", borderRadius: "12px", padding: "24px" }}>
@@ -202,12 +292,12 @@ export function GapReportPanel({
             borderRadius: "9999px",
             padding: "2px 12px",
             fontSize: "12px",
-            ...(gapReport.need_follow_up
+            ...(comparison.need_follow_up
               ? { background: "#fef3cd", color: "#92400e", border: "1px solid #fde68a" }
               : { background: "#d1fae5", color: "#065f46", border: "1px solid #a7f3d0" }),
           }}
         >
-          {gapReport.need_follow_up ? "建议继续补充" : "当前结果可用"}
+          {comparison.need_follow_up ? "建议继续补充" : "当前结果可用"}
         </span>
       </div>
 
@@ -216,7 +306,7 @@ export function GapReportPanel({
           判断说明
         </p>
         <p style={{ color: "#64748b", fontSize: "14px", lineHeight: 1.75, marginTop: "12px" }}>
-          {gapReport.reasoning || "暂未提供补充说明。"}
+          {comparison.gap_reasoning || "暂未提供补充说明。"}
         </p>
       </div>
 
@@ -224,13 +314,13 @@ export function GapReportPanel({
         <CardList
           title="待补充问题"
           icon={<Quote className="h-4 w-4" />}
-          items={gapReport.missing_aspects}
+          items={comparison.gaps}
           emptyText="当前未记录明显空白"
         />
         <CardList
           title="建议检索方向"
           icon={<SearchCode className="h-4 w-4" />}
-          items={gapReport.follow_up_queries}
+          items={comparison.follow_up_queries}
           emptyText="当前无需追加检索"
         />
       </div>
@@ -238,40 +328,88 @@ export function GapReportPanel({
   );
 }
 
-export function ClaimTablePanel({ rows }: { rows: ClaimEvidenceRow[] }) {
+export function DebateLogPanel({ rounds }: { rounds: DebateRound[] }) {
+  if (!rounds || rounds.length === 0) return null;
   return (
     <section style={{ background: "#ffffff", border: "1px solid #e3e8ee", borderRadius: "12px", padding: "24px" }}>
-      <p style={{ color: "#64748b", fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.2em" }}>
-        Claim Map
-      </p>
-      <h3 style={{ color: "#0d253d", fontSize: "24px", fontWeight: 300, marginTop: "8px" }}>结论证据映射</h3>
-      <div className="mt-5 space-y-4">
-        {rows.map((row) => (
-          <article key={row.claim} style={{ background: "#f6f9fc", border: "1px solid #e3e8ee", borderRadius: "12px", padding: "20px" }}>
-            <div className="flex items-start justify-between gap-4">
-              <h4 style={{ color: "#0d253d", fontSize: "16px", fontWeight: 600, maxWidth: "48rem" }}>{row.claim}</h4>
-              <span style={{ background: "#f6f9fc", color: "#533afd", border: "1px solid #e3e8ee", borderRadius: "9999px", padding: "2px 12px", fontSize: "12px" }}>
-                {formatSupportLevel(row.support_level)}
-              </span>
-            </div>
-            <p style={{ color: "#64748b", fontSize: "14px", marginTop: "8px" }}>{row.rationale}</p>
-            <div className="mt-4 flex flex-wrap gap-2">
-              {row.supporting_paper_ids.map((paperId) => (
-                <span key={paperId} style={{ background: "#f6f9fc", color: "#533afd", border: "1px solid #e3e8ee", borderRadius: "9999px", padding: "2px 12px", fontSize: "12px" }}>
-                  {paperId}
+      <div className="flex items-center gap-3">
+        <div style={{ background: "#f6f9fc", borderRadius: "12px", padding: "12px" }}>
+          <MessageSquare className="h-5 w-5" style={{ color: "#533afd" }} />
+        </div>
+        <div>
+          <p style={{ color: "#64748b", fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.2em" }}>
+            Multi-Agent Debate
+          </p>
+          <h3 style={{ color: "#0d253d", fontSize: "24px", fontWeight: 300, marginTop: "4px" }}>Critic-Writer 辩论记录</h3>
+        </div>
+      </div>
+      <div className="mt-6 space-y-4">
+        {rounds.map((round) => (
+          <article key={round.round_number} style={{ background: "#f6f9fc", border: "1px solid #e3e8ee", borderRadius: "12px", padding: "20px" }}>
+            <div className="flex items-center justify-between gap-4">
+              <h4 style={{ color: "#0d253d", fontSize: "16px", fontWeight: 600 }}>
+                第 {round.round_number} 轮
+              </h4>
+              <div className="flex items-center gap-3">
+                <span style={{ background: "#f6f9fc", color: "#533afd", border: "1px solid #e3e8ee", borderRadius: "9999px", padding: "2px 12px", fontSize: "12px" }}>
+                  质量分 {round.critic_quality_score}/10
                 </span>
-              ))}
+                <span
+                  style={{
+                    borderRadius: "9999px",
+                    padding: "2px 12px",
+                    fontSize: "12px",
+                    ...(round.passed
+                      ? { background: "#d1fae5", color: "#065f46", border: "1px solid #a7f3d0" }
+                      : { background: "#fef3cd", color: "#92400e", border: "1px solid #fde68a" }),
+                  }}
+                >
+                  {round.passed ? "质量达标" : "需要修订"}
+                </span>
+              </div>
             </div>
-            <div className="mt-4 space-y-2">
-              {row.evidence.map((evidence, index) => (
-                <div key={`${row.claim}-${index}`} style={{ background: "#ffffff", border: "1px solid #e3e8ee", borderRadius: "16px", padding: "12px" }}>
-                  <p style={{ color: "#273951", fontSize: "14px" }}>{evidence.snippet}</p>
-                  <p style={{ color: "#64748b", fontSize: "12px", marginTop: "8px" }}>
-                    {formatSourceLabel(evidence.source)} · {evidence.section || "未标注章节"} · 第 {evidence.page || "-"} 页
-                  </p>
-                </div>
-              ))}
-            </div>
+            {round.critic_weaknesses.length > 0 && (
+              <div className="mt-4 space-y-2">
+                <p style={{ color: "#64748b", fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.22em" }}>
+                  Critic 发现的弱点
+                </p>
+                {round.critic_weaknesses.map((w, i) => (
+                  <div key={i} style={{ background: "#ffffff", border: "1px solid #e3e8ee", borderRadius: "12px", padding: "12px 16px" }}>
+                    <div className="flex items-start gap-2">
+                      <span
+                        style={{
+                          borderRadius: "9999px",
+                          padding: "1px 8px",
+                          fontSize: "11px",
+                          flexShrink: 0,
+                          ...(w.severity === "high"
+                            ? { background: "#fee2e2", color: "#991b1b" }
+                            : w.severity === "medium"
+                            ? { background: "#fef3cd", color: "#92400e" }
+                            : { background: "#f6f9fc", color: "#64748b" }),
+                        }}
+                      >
+                        {w.severity}
+                      </span>
+                      <div>
+                        <p style={{ color: "#273951", fontSize: "14px" }}>{w.point}</p>
+                        {w.suggestion && (
+                          <p style={{ color: "#533afd", fontSize: "13px", marginTop: "6px" }}>建议：{w.suggestion}</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {round.revision_summary && (
+              <div className="mt-4" style={{ background: "#ffffff", border: "1px solid #e3e8ee", borderRadius: "12px", padding: "12px 16px" }}>
+                <p style={{ color: "#64748b", fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.22em" }}>
+                  Writer 修订说明
+                </p>
+                <p style={{ color: "#273951", fontSize: "14px", marginTop: "6px" }}>{round.revision_summary}</p>
+              </div>
+            )}
           </article>
         ))}
       </div>
@@ -279,44 +417,63 @@ export function ClaimTablePanel({ rows }: { rows: ClaimEvidenceRow[] }) {
   );
 }
 
-export function CitationPanel({
-  report,
-}: {
-  report: CitationVerificationReport;
-}) {
+export function ReliabilityPanel({ reliability }: { reliability: SynthesisReliability }) {
+  if (!reliability) return null;
   return (
     <section style={{ background: "#ffffff", border: "1px solid #e3e8ee", borderRadius: "12px", padding: "24px" }}>
-      <p style={{ color: "#64748b", fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.2em" }}>
-        Verification
-      </p>
-      <h3 style={{ color: "#0d253d", fontSize: "24px", fontWeight: 300, marginTop: "8px" }}>研究笔记核验</h3>
-      <div className="mt-5 grid gap-3 md:grid-cols-3">
-        <MiniMetric label="总体支持率" value={`${Math.round(report.overall_score * 100)}%`} />
-        <MiniMetric label="已支持结论" value={report.supported_count} />
-        <MiniMetric label="未支持结论" value={report.unsupported_count} />
+      <div className="flex items-center gap-3">
+        <div style={{ background: "#f6f9fc", borderRadius: "12px", padding: "12px" }}>
+          <ShieldCheck className="h-5 w-5" style={{ color: "#533afd" }} />
+        </div>
+        <div>
+          <p style={{ color: "#64748b", fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.2em" }}>
+            Evidence Reliability
+          </p>
+          <h3 style={{ color: "#0d253d", fontSize: "24px", fontWeight: 300, marginTop: "4px" }}>证据可靠性评估</h3>
+        </div>
       </div>
-      <div className="mt-5 space-y-3">
-        {report.items.map((item) => (
-          <article key={item.claim} style={{ background: "#f6f9fc", border: "1px solid #e3e8ee", borderRadius: "16px", padding: "16px" }}>
-            <div className="flex items-start justify-between gap-3">
-              <h4 style={{ color: "#0d253d", fontSize: "14px", fontWeight: 600 }}>{item.claim}</h4>
-              <span
-                style={{
-                  borderRadius: "9999px",
-                  padding: "2px 12px",
-                  fontSize: "12px",
-                  ...(item.supported
-                    ? { background: "#d1fae5", color: "#065f46" }
-                    : { background: "#fee2e2", color: "#991b1b" }),
-                }}
-              >
-                {formatSupportLevel(item.support_level)}
-              </span>
-            </div>
-            <p style={{ color: "#64748b", fontSize: "14px", marginTop: "8px" }}>{item.reason}</p>
-          </article>
-        ))}
+      <div className="mt-6 grid gap-3 md:grid-cols-4">
+        <MiniMetric label="总体评分" value={`${Math.round(reliability.overall_score * 100)}%`} />
+        <MiniMetric label="强证据" value={reliability.strong_count} />
+        <MiniMetric label="中等证据" value={reliability.moderate_count} />
+        <MiniMetric label="弱/孤立" value={reliability.weak_count + reliability.isolated_count} />
       </div>
+      {reliability.claims.length > 0 && (
+        <div className="mt-5 space-y-3">
+          {reliability.claims.map((c, i) => (
+            <article key={i} style={{ background: "#f6f9fc", border: "1px solid #e3e8ee", borderRadius: "12px", padding: "16px" }}>
+              <div className="flex items-start justify-between gap-3">
+                <h4 style={{ color: "#0d253d", fontSize: "14px", fontWeight: 600, flex: 1 }}>{c.claim}</h4>
+                <span
+                  style={{
+                    borderRadius: "9999px",
+                    padding: "2px 12px",
+                    fontSize: "12px",
+                    flexShrink: 0,
+                    ...(c.reliability_level === "strong"
+                      ? { background: "#d1fae5", color: "#065f46" }
+                      : c.reliability_level === "moderate"
+                      ? { background: "#dbeafe", color: "#1e40af" }
+                      : c.reliability_level === "weak"
+                      ? { background: "#fef3cd", color: "#92400e" }
+                      : { background: "#f6f9fc", color: "#64748b" }),
+                  }}
+                >
+                  {c.reliability_level}
+                </span>
+              </div>
+              <p style={{ color: "#64748b", fontSize: "14px", marginTop: "8px" }}>{c.reasoning}</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {c.quality_signals.map((s, j) => (
+                  <span key={j} style={{ background: "#ffffff", color: "#533afd", border: "1px solid #e3e8ee", borderRadius: "9999px", padding: "1px 10px", fontSize: "11px" }}>
+                    {s}
+                  </span>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -482,16 +639,24 @@ function formatStageLabel(stage: string) {
       return "证据整理";
     case "compare":
       return "横向比较";
+    case "unit_synthesis":
+      return "分小节综合";
     case "gap_detect":
       return "空白检查";
     case "claim_table":
       return "结论映射";
     case "write":
       return "综述撰写";
+    case "debate":
+      return "多轮辩论";
+    case "reliability":
+      return "可靠性评估";
     case "verify":
       return "结论核验";
     case "review":
       return "结果审查";
+    case "fact_check":
+      return "论断校验";
     case "finalize":
       return "最终整理";
     default:
@@ -509,5 +674,254 @@ function formatStageStatus(status: string) {
       return "待处理";
     default:
       return status;
+  }
+}
+
+// ─── Phase 2: 按 ResearchUnit 小节展示 ───
+
+export function UnitSynthesisPanel({ syntheses, papers = [] }: { syntheses: UnitSynthesis[]; papers?: Paper[] }) {
+  if (!syntheses || syntheses.length === 0) return null;
+  // 1. 构建 paper_id → 标题映射，避免前端只显示晦涩的 OpenAlex/arXiv ID
+  const paperTitleMap = new Map<string, string>();
+  for (const p of papers) {
+    if (p && p.paper_id) {
+      paperTitleMap.set(p.paper_id, p.title || p.paper_id);
+    }
+  }
+  return (
+    <section style={{ background: "#ffffff", border: "1px solid #e3e8ee", borderRadius: "12px", padding: "24px" }}>
+      <div className="flex items-center gap-3">
+        <div style={{ background: "#f6f9fc", borderRadius: "12px", padding: "12px" }}>
+          <FileText className="h-5 w-5" style={{ color: "#533afd" }} />
+        </div>
+        <div>
+          <p style={{ color: "#64748b", fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.2em" }}>
+            Per-question Synthesis
+          </p>
+          <h3 style={{ color: "#0d253d", fontSize: "24px", fontWeight: 300, marginTop: "4px" }}>按研究问题分小节</h3>
+        </div>
+      </div>
+
+      <div className="mt-6 space-y-4">
+        {syntheses.map((unit) => (
+          <article
+            key={unit.unit_id}
+            style={{ background: "#f6f9fc", border: "1px solid #e3e8ee", borderRadius: "12px", padding: "20px" }}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p style={{ color: "#64748b", fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.22em" }}>
+                  {unit.unit_id}
+                </p>
+                <h4 style={{ color: "#0d253d", fontSize: "16px", fontWeight: 600, marginTop: "6px" }}>{unit.question}</h4>
+              </div>
+              <span style={{ background: "#ffffff", color: "#533afd", border: "1px solid #e3e8ee", borderRadius: "9999px", padding: "2px 12px", fontSize: "12px", flexShrink: 0 }}>
+                置信度 {Math.round(unit.confidence * 100)}%
+              </span>
+            </div>
+
+            {unit.summary && (
+              <p style={{ color: "#273951", fontSize: "14px", lineHeight: 1.75, marginTop: "12px" }}>{unit.summary}</p>
+            )}
+
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <UnitSubList title="核心方法" items={unit.key_methods} />
+              <UnitSubList title="一致性结论" items={unit.consensus} />
+              <UnitSubList title="分歧或矛盾" items={unit.disagreements} />
+              <UnitSubList title="开放问题" items={unit.open_questions} />
+            </div>
+
+            {unit.supporting_paper_ids.length > 0 && (
+              <div className="mt-4">
+                <p style={{ color: "#64748b", fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.22em" }}>
+                  引用论文
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {unit.supporting_paper_ids.map((pid) => {
+                    const title = paperTitleMap.get(pid);
+                    return (
+                      <span
+                        key={pid}
+                        title={pid}
+                        style={{ background: "#ffffff", color: "#273951", border: "1px solid #e3e8ee", borderRadius: "9999px", padding: "1px 10px", fontSize: "11px", maxWidth: "420px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+                      >
+                        {title ?? pid}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function UnitSubList({ title, items }: { title: string; items: string[] }) {
+  if (!items || items.length === 0) return null;
+  return (
+    <div style={{ background: "#ffffff", border: "1px solid #e3e8ee", borderRadius: "12px", padding: "12px 16px" }}>
+      <p style={{ color: "#64748b", fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.22em" }}>{title}</p>
+      <ul className="mt-2 space-y-1">
+        {items.map((item, idx) => (
+          <li key={`${title}-${idx}`} style={{ color: "#273951", fontSize: "13px", lineHeight: 1.65 }}>
+            · {item}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// ─── Phase 3: 论断校验展示 ───
+
+export function FactCheckPanel({ report }: { report: FactCheckReport | null }) {
+  if (!report || report.total_claims === 0) return null;
+  return (
+    <section style={{ background: "#ffffff", border: "1px solid #e3e8ee", borderRadius: "12px", padding: "24px" }}>
+      <div className="flex items-center gap-3">
+        <div style={{ background: "#f6f9fc", borderRadius: "12px", padding: "12px" }}>
+          <ScanSearch className="h-5 w-5" style={{ color: "#533afd" }} />
+        </div>
+        <div>
+          <p style={{ color: "#64748b", fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.2em" }}>
+            Claim Fact Check
+          </p>
+          <h3 style={{ color: "#0d253d", fontSize: "24px", fontWeight: 300, marginTop: "4px" }}>论断证据校验</h3>
+        </div>
+      </div>
+
+      <div className="mt-6 grid gap-3 md:grid-cols-4">
+        <MiniMetric label="整体支撑率" value={`${Math.round(report.overall_score * 100)}%`} />
+        <MiniMetric label="有支撑" value={report.supported_count} />
+        <MiniMetric label="弱支撑" value={report.weak_count} />
+        <MiniMetric label="无证据" value={report.unsupported_count} />
+      </div>
+
+      <div className="mt-5 space-y-3">
+        {report.items.map((item, idx) => (
+          <FactCheckItemCard key={`fc-${idx}`} item={item} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+export function ContradictionPanel({ contradictions }: { contradictions: Contradiction[] }) {
+  // 1. 没有矛盾时不渲染该面板，避免空白噪音
+  if (!contradictions || contradictions.length === 0) return null;
+  return (
+    <section style={{ background: "#ffffff", border: "1px solid #e3e8ee", borderRadius: "12px", padding: "24px" }}>
+      <div className="flex items-center gap-3">
+        <div style={{ background: "#fff5f5", borderRadius: "12px", padding: "12px" }}>
+          <AlertTriangle className="h-5 w-5" style={{ color: "#dc2626" }} />
+        </div>
+        <div>
+          <p style={{ color: "#64748b", fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.2em" }}>
+            Cross-Paper Contradictions
+          </p>
+          <h3 style={{ color: "#0d253d", fontSize: "24px", fontWeight: 300, marginTop: "4px" }}>
+            跨论文矛盾（{contradictions.length}）
+          </h3>
+        </div>
+      </div>
+
+      <div className="mt-5 space-y-3">
+        {contradictions.map((item, idx) => (
+          <article
+            key={`contra-${idx}`}
+            style={{ background: "#fff5f5", border: "1px solid #fecaca", borderRadius: "12px", padding: "16px" }}
+          >
+            <p style={{ color: "#0d253d", fontSize: "14px", fontWeight: 600 }}>
+              {item.topic || `矛盾 ${idx + 1}`}
+            </p>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <div>
+                <p style={{ color: "#64748b", fontSize: "11px", fontWeight: 600, marginBottom: "4px" }}>
+                  论断 A · {item.paper_id_a}
+                </p>
+                <p style={{ color: "#0d253d", fontSize: "13px", lineHeight: 1.6 }}>{item.claim_a}</p>
+              </div>
+              <div>
+                <p style={{ color: "#64748b", fontSize: "11px", fontWeight: 600, marginBottom: "4px" }}>
+                  论断 B · {item.paper_id_b}
+                </p>
+                <p style={{ color: "#0d253d", fontSize: "13px", lineHeight: 1.6 }}>{item.claim_b}</p>
+              </div>
+            </div>
+            {item.rationale && (
+              <p style={{ color: "#7f1d1d", fontSize: "12px", marginTop: "10px", lineHeight: 1.6 }}>
+                ⚠ {item.rationale}
+              </p>
+            )}
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function FactCheckItemCard({ item }: { item: ClaimFactCheck }) {
+  return (
+    <article style={{ background: "#f6f9fc", border: "1px solid #e3e8ee", borderRadius: "12px", padding: "16px" }}>
+      <div className="flex items-start justify-between gap-3">
+        <p style={{ color: "#0d253d", fontSize: "14px", lineHeight: 1.65, flex: 1 }}>{item.claim}</p>
+        <span
+          style={{
+            borderRadius: "9999px",
+            padding: "2px 12px",
+            fontSize: "12px",
+            flexShrink: 0,
+            ...formatSupportLevelStyle(item.support_level),
+          }}
+        >
+          {formatSupportLevelLabel(item.support_level)}
+        </span>
+      </div>
+      <p style={{ color: "#64748b", fontSize: "12px", marginTop: "8px" }}>
+        {item.reason}（重叠分 {item.keyword_overlap_score.toFixed(2)}）
+      </p>
+      {item.matched_paper_ids.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {item.matched_paper_ids.map((pid) => (
+            <span key={pid} style={{ background: "#ffffff", color: "#273951", border: "1px solid #e3e8ee", borderRadius: "9999px", padding: "1px 10px", fontSize: "11px", fontFamily: "monospace" }}>
+              {pid}
+            </span>
+          ))}
+        </div>
+      )}
+    </article>
+  );
+}
+
+function formatSupportLevelLabel(level: string) {
+  switch (level) {
+    case "strong":
+      return "强支撑";
+    case "moderate":
+      return "中等支撑";
+    case "weak":
+      return "弱支撑";
+    case "unsupported":
+      return "无证据";
+    default:
+      return level || "未标注";
+  }
+}
+
+function formatSupportLevelStyle(level: string): React.CSSProperties {
+  switch (level) {
+    case "strong":
+      return { background: "#d1fae5", color: "#065f46", border: "1px solid #a7f3d0" };
+    case "moderate":
+      return { background: "#dbeafe", color: "#1e40af", border: "1px solid #bfdbfe" };
+    case "weak":
+      return { background: "#fef3cd", color: "#92400e", border: "1px solid #fde68a" };
+    case "unsupported":
+      return { background: "#fee2e2", color: "#991b1b", border: "1px solid #fca5a5" };
+    default:
+      return { background: "#f6f9fc", color: "#64748b", border: "1px solid #e3e8ee" };
   }
 }

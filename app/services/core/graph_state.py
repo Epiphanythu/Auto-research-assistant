@@ -6,9 +6,11 @@ from typing import List, TypedDict
 
 from app.models.research_models import (
     ComparisonSummary,
+    Contradiction,
+    DebateRound,
     EvidenceBundle,
+    FactCheckReport,
     FullTextDocument,
-    GapReport,
     Paper,
     PaperInsight,
     ResearchPlan,
@@ -17,6 +19,7 @@ from app.models.research_models import (
     SSEEvent,
     StageTransition,
     SynthesisReliability,
+    UnitSynthesis,
 )
 
 
@@ -43,15 +46,22 @@ class GraphState(TypedDict, total=False):
 
     # Synthesize node
     comparison: ComparisonSummary
-    gap_report: GapReport
     research_note: str
     next_actions: List[str]
     evidence_bundles: List[EvidenceBundle]
+    unit_syntheses: List[UnitSynthesis]
     follow_up_queries: List[str]
-    synthesis_reliability: SynthesisReliability
+
+    # Debate node
+    debate_log: List[DebateRound]
 
     # Review node
     review_report: ReviewReport
+    synthesis_reliability: SynthesisReliability
+
+    # Fact check node
+    fact_check_report: FactCheckReport
+    contradictions: List[Contradiction]
 
     # Control
     search_iteration: int

@@ -3,20 +3,17 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, FileClock, LoaderCircle, RefreshCw, Sparkles } from "lucide-react";
 
 import { EmptyState } from "@/components/EmptyState";
-import { EvidenceBundlePanel } from "@/components/EvidenceBundlePanel";
 import { PaperListPanel } from "@/components/PaperCard";
-import { RecommendationsPanel } from "@/components/RecommendationsPanel";
 import {
-  CitationPanel,
-  ClaimTablePanel,
-  GapReportPanel,
-  InsightList,
-  OverviewPanel,
-  ReviewDecisionPanel,
+  ContradictionPanel,
+  DebateLogPanel,
+  FactCheckPanel,
   StageTimeline,
+  UnitSynthesisPanel,
 } from "@/components/ReportPanels";
 import { ReportExportPanel } from "@/components/ReportExportPanel";
 import { useResearchStore } from "@/store/researchStore";
+import { normalizeReport } from "@/utils/normalizeReport";
 
 export default function ReportDetailPage() {
   const { reportId = "" } = useParams();
@@ -29,9 +26,6 @@ export default function ReportDetailPage() {
     clearError,
     loadArchivedReport,
     prepareFollowUp,
-    recommendations,
-    recommendationLoading,
-    fetchRecommendations,
   } = useResearchStore();
 
   useEffect(() => {
@@ -104,10 +98,9 @@ export default function ReportDetailPage() {
     );
   }
 
-  // 1. follow-up 候选方向，优先使用 gap_report.follow_up_queries。
-  const followUpQueries = report.gap_report.follow_up_queries.slice(0, 6);
+  const safeReport = normalizeReport(report);
+  const followUpQueries = safeReport.comparison.follow_up_queries.slice(0, 6);
 
-  // 2. handleFollowUp 把当前报告的请求参数与指定方向带回工作台。
   const handleFollowUp = (direction: string) => {
     prepareFollowUp({
       baseRequest: report.request,
@@ -119,12 +112,11 @@ export default function ReportDetailPage() {
 
   return (
     <div className="space-y-6">
-      {/* ─── Hero section: white card with subtle gradient overlay ─── */}
+      {/* Hero */}
       <section
         className="relative overflow-hidden rounded-2xl"
         style={{ background: "#ffffff", border: "1px solid #e3e8ee" }}
       >
-        {/* Subtle gradient mesh background */}
         <div
           className="pointer-events-none absolute inset-0 opacity-[0.035]"
           style={{
@@ -148,24 +140,18 @@ export default function ReportDetailPage() {
             </p>
             <h1
               className="mt-3 max-w-4xl leading-tight"
-              style={{
-                color: "#0d253d",
-                fontSize: "24px",
-                fontWeight: 300,
-              }}
+              style={{ color: "#0d253d", fontSize: "24px", fontWeight: 300 }}
             >
               {report.request.topic}
             </h1>
-            <p className="mt-4 max-w-3xl text-sm leading-7" style={{ color: "#64748b" }}>
-              这里集中展示当前历史报告的审查结果、结构化综述、证据整理、核验记录和阶段轨迹，便于回看与复用。
-            </p>
             <div className="mt-5 flex flex-wrap gap-3 text-xs" style={{ color: "#273951" }}>
               <MetaTag label="报告编号" value={reportId} />
               <MetaTag label="论文数" value={String(report.papers.length)} />
               <MetaTag
-                label="支持率"
-                value={`${Math.round(report.citation_verification.overall_score * 100)}%`}
+                label="可靠性"
+                value={report.synthesis_reliability ? `${Math.round(report.synthesis_reliability.overall_score * 100)}%` : "-"}
               />
+              <MetaTag label="辩论轮数" value={String(report.debate_log?.length ?? 0)} />
               <MetaTag label="阶段数" value={String(report.stage_history.length)} />
             </div>
           </div>
@@ -200,9 +186,6 @@ export default function ReportDetailPage() {
               <Sparkles className="h-4 w-4" />
               <span className="text-sm font-medium">推荐 follow-up 检索方向</span>
             </div>
-            <p className="mt-2 text-xs leading-5" style={{ color: "#64748b" }}>
-              这些方向来源于当前报告的研究空白分析，点击即可在工作台预填新一轮研究任务。
-            </p>
             <div className="mt-3 flex flex-wrap gap-2">
               {followUpQueries.map((query) => (
                 <button
@@ -222,28 +205,11 @@ export default function ReportDetailPage() {
 
       <ReportExportPanel report={report} />
       <PaperListPanel papers={report.papers} />
-      <ReviewDecisionPanel reviewReport={report.review_report} />
-      <GapReportPanel gapReport={report.gap_report} />
-      <OverviewPanel
-        overview={report.comparison.overview}
-        trends={report.comparison.trends}
-        gaps={report.comparison.gaps}
-        ideas={report.comparison.ideas}
-        researchNote={report.research_note}
-        nextActions={report.next_actions}
-      />
-      <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-        <CitationPanel report={report.citation_verification} />
-        <StageTimeline stages={report.stage_history} />
-      </div>
-      <EvidenceBundlePanel bundles={report.evidence_bundles} />
-      <ClaimTablePanel rows={report.claim_evidence_table} />
-      <InsightList insights={report.insights} />
-      <RecommendationsPanel
-        recommendations={recommendations}
-        loading={recommendationLoading}
-        onLoadMore={() => void fetchRecommendations(report.plan.normalized_topic || report.request.topic)}
-      />
+      <UnitSynthesisPanel syntheses={safeReport.unit_syntheses ?? []} papers={report.papers ?? []} />
+      <FactCheckPanel report={safeReport.fact_check_report} />
+      <ContradictionPanel contradictions={safeReport.contradictions ?? []} />
+      <DebateLogPanel rounds={report.debate_log ?? []} />
+      <StageTimeline stages={report.stage_history} />
     </div>
   );
 }

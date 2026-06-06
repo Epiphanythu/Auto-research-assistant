@@ -2,11 +2,13 @@ import { NavLink, useLocation } from "react-router-dom";
 import {
   Beaker,
   FileSearch,
+  Moon,
   ShieldCheck,
+  Sun,
   Workflow,
   TrendingUp,
 } from "lucide-react";
-import { type PropsWithChildren, type ComponentType, type SVGProps } from "react";
+import { type PropsWithChildren, type ComponentType, type SVGProps, useEffect, useState } from "react";
 
 /* ─── Types ─── */
 
@@ -14,6 +16,18 @@ interface NavItem {
   to: string;
   label: string;
   icon: ComponentType<SVGProps<SVGSVGElement>>;
+}
+
+/* ─── Theme Constants ─── */
+
+const THEME_STORAGE_KEY = "theme";
+type ThemeMode = "light" | "dark";
+
+// readInitialTheme 从 localStorage 读取主题偏好，默认 light
+function readInitialTheme(): ThemeMode {
+  if (typeof window === "undefined") return "light";
+  const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+  return stored === "dark" ? "dark" : "light";
 }
 
 /* ─── Navigation Config ─── */
@@ -40,6 +54,19 @@ function navLinkClass({ isActive }: { isActive: boolean }): string {
 
 export function AppShell({ children }: PropsWithChildren) {
   const location = useLocation();
+
+  // 1. 主题状态：在挂载时同步 document.documentElement，并写入 localStorage
+  const [theme, setTheme] = useState<ThemeMode>(() => readInitialTheme());
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === "dark") {
+      root.classList.add("dark");
+    } else {
+      root.classList.remove("dark");
+    }
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
+  const toggleTheme = () => setTheme((prev) => (prev === "dark" ? "light" : "dark"));
 
   return (
     <div className="min-h-screen bg-[var(--color-canvas-soft)]">
@@ -98,6 +125,24 @@ export function AppShell({ children }: PropsWithChildren) {
 
           {/* Right-side placeholder (user avatar / settings) */}
           <div className="flex items-center gap-3">
+            {/* 主题切换按钮：与导航栏视觉风格保持一致 */}
+            <button
+              type="button"
+              onClick={toggleTheme}
+              aria-label={theme === "dark" ? "切换为浅色模式" : "切换为深色模式"}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-[var(--radius-pill)] transition-colors duration-150"
+              style={{
+                color: "var(--color-ink-secondary)",
+                border: "1px solid var(--color-hairline)",
+                background: "var(--color-canvas)",
+              }}
+            >
+              {theme === "dark" ? (
+                <Sun className="h-[15px] w-[15px]" strokeWidth={2} />
+              ) : (
+                <Moon className="h-[15px] w-[15px]" strokeWidth={2} />
+              )}
+            </button>
             <div
               className="h-8 w-8 rounded-[var(--radius-pill)]"
               style={{

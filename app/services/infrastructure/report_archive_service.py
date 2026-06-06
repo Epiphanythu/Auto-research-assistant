@@ -72,6 +72,24 @@ class ReportArchiveService:
             raise ReportArchiveLoadError(f"读取报告文件 {report_path} 失败：{error}") from error
         return ResearchReport(**report_payload)
 
+    def delete_report(self, report_id: str) -> None:
+        """delete_report 删除指定报告及其索引条目。"""
+        archive_dir = self.settings.get_report_archive_dir()
+        report_path = self._get_report_path(archive_dir, report_id)
+        index_path = self._get_index_path(archive_dir)
+
+        if not report_path.exists():
+            raise ArchivedReportNotFoundError(report_id)
+
+        try:
+            report_path.unlink()
+        except OSError as error:
+            raise ReportArchiveSaveError(f"删除报告文件 {report_path} 失败：{error}") from error
+
+        history_items = self._load_index(index_path)
+        history_items = [item for item in history_items if item.report_id != report_id]
+        self._write_index(index_path, history_items)
+
     @staticmethod
     def _build_report_id() -> str:
         """_build_report_id 生成报告编号。"""

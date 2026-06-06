@@ -246,57 +246,7 @@ function CompareMatrix({ reports }: { reports: ResearchReport[] }) {
         title="核心指标对比"
         description="一眼看到不同报告在论文数、阶段数、支持率、研究空白和审查结论上的差异。"
       >
-        <div className="grid gap-4 lg:grid-cols-3">
-          {reports.map((report) => (
-            <article
-              key={report.request.topic + report.research_note.length}
-              className="p-5"
-              style={{
-                background: "#ffffff",
-                border: "1px solid #e3e8ee",
-                borderRadius: "12px",
-              }}
-            >
-              <p
-                style={{
-                  color: "#64748b",
-                  fontSize: "11px",
-                  fontWeight: 600,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.2em",
-                }}
-              >
-                Topic
-              </p>
-              <h3 className="mt-2 text-base font-semibold" style={{ color: "#0d253d" }}>
-                {report.request.topic}
-              </h3>
-              <div className="mt-4 grid grid-cols-2 gap-3">
-                <Metric label="论文数" value={String(report.papers.length)} />
-                <Metric
-                  label="阶段数"
-                  value={String(report.stage_history.length)}
-                />
-                <Metric
-                  label="支持率"
-                  value={`${Math.round(report.citation_verification.overall_score * 100)}%`}
-                />
-                <Metric
-                  label="未支持结论"
-                  value={String(report.citation_verification.unsupported_count)}
-                />
-                <Metric
-                  label="待补研究空白"
-                  value={String(report.gap_report.missing_aspects.length)}
-                />
-                <Metric
-                  label="审查结论"
-                  value={formatVerdictLabel(report.review_report.verdict)}
-                />
-              </div>
-            </article>
-          ))}
-        </div>
+        <CoreMetricsTable reports={reports} />
       </SectionCard>
 
       <SectionCard
@@ -359,9 +309,9 @@ function CompareMatrix({ reports }: { reports: ResearchReport[] }) {
               >
                 Gap · {index + 1}
               </p>
-              {report.gap_report.missing_aspects.length ? (
+              {report.comparison.gaps.length ? (
                 <ul className="mt-3 space-y-2 text-sm leading-6" style={{ color: "#273951" }}>
-                  {report.gap_report.missing_aspects.map((aspect, idx) => (
+                  {report.comparison.gaps.map((aspect, idx) => (
                     <li
                       key={idx}
                       className="px-3 py-2"
@@ -420,7 +370,282 @@ function CompareMatrix({ reports }: { reports: ResearchReport[] }) {
           ))}
         </div>
       </SectionCard>
+
+      <FactCheckDiffSection reports={reports} />
     </section>
+  );
+}
+
+// CoreMetricsTable 渲染核心指标对比表格，使用 sticky 表头与 sticky 首列以便横向滚动时仍可读
+function CoreMetricsTable({ reports }: { reports: ResearchReport[] }) {
+  // 1. 行定义：标签 + 按报告抽取数值的方法，集中维护以便后续追加指标
+  const rows: Array<{ label: string; render: (report: ResearchReport) => string }> = [
+    { label: "Topic", render: (r) => r.request.topic },
+    { label: "论文数", render: (r) => String(r.papers.length) },
+    { label: "阶段数", render: (r) => String(r.stage_history.length) },
+    {
+      label: "可靠性",
+      render: (r) =>
+        r.synthesis_reliability ? `${Math.round(r.synthesis_reliability.overall_score * 100)}%` : "-",
+    },
+    {
+      label: "弱/孤立结论",
+      render: (r) =>
+        String((r.synthesis_reliability?.weak_count ?? 0) + (r.synthesis_reliability?.isolated_count ?? 0)),
+    },
+    { label: "待补研究空白", render: (r) => String(r.comparison.gaps.length) },
+    { label: "审查结论", render: (r) => formatVerdictLabel(r.review_report.verdict) },
+  ];
+
+  // 2. 共享单元格样式：在内联样式上保留 background:#ffffff，便于 sticky 列遮挡下层内容
+  const labelCellStyle: React.CSSProperties = {
+    position: "sticky",
+    left: 0,
+    background: "#ffffff",
+    zIndex: 1,
+    color: "#0d253d",
+    fontSize: "13px",
+    fontWeight: 600,
+    padding: "10px 14px",
+    borderBottom: "1px solid #e3e8ee",
+    borderRight: "1px solid #e3e8ee",
+    minWidth: "140px",
+    textAlign: "left",
+  };
+  const headerCellStyle: React.CSSProperties = {
+    position: "sticky",
+    top: 0,
+    background: "#f6f9fc",
+    zIndex: 2,
+    color: "#64748b",
+    fontSize: "11px",
+    fontWeight: 600,
+    textTransform: "uppercase",
+    letterSpacing: "0.2em",
+    padding: "10px 14px",
+    borderBottom: "1px solid #e3e8ee",
+    textAlign: "left",
+    minWidth: "180px",
+  };
+  // 首列 + 表头交叉处需要更高的 z-index，避免被普通表头遮挡
+  const cornerCellStyle: React.CSSProperties = {
+    ...headerCellStyle,
+    ...labelCellStyle,
+    background: "#f6f9fc",
+    zIndex: 3,
+  };
+  const dataCellStyle: React.CSSProperties = {
+    color: "#273951",
+    fontSize: "13px",
+    padding: "10px 14px",
+    borderBottom: "1px solid #e3e8ee",
+    background: "#ffffff",
+  };
+
+  return (
+    <div
+      style={{
+        overflow: "auto",
+        maxHeight: "70vh",
+        border: "1px solid #e3e8ee",
+        borderRadius: "12px",
+        background: "#ffffff",
+      }}
+    >
+      <table style={{ borderCollapse: "separate", borderSpacing: 0, width: "100%" }}>
+        <thead>
+          <tr>
+            <th style={cornerCellStyle}>指标</th>
+            {reports.map((report, idx) => (
+              <th key={`head-${idx}`} style={headerCellStyle}>
+                Report {idx + 1}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.label}>
+              <th scope="row" style={labelCellStyle}>
+                {row.label}
+              </th>
+              {reports.map((report, idx) => (
+                <td key={`${row.label}-${idx}`} style={dataCellStyle}>
+                  {row.render(report)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// FactCheckDiffSection 计算 fact_check_report.flagged_claims 的交集 / 差集，便于看出共同高风险论断。
+function FactCheckDiffSection({ reports }: { reports: ResearchReport[] }) {
+  // 1. 收集每份报告的 flagged_claims（去重）
+  const flaggedSets = reports.map((report) => {
+    const items = report.fact_check_report?.flagged_claims ?? [];
+    return new Set(items);
+  });
+  const hasAnyFactCheck = reports.some((report) => report.fact_check_report);
+  if (!hasAnyFactCheck) {
+    return null;
+  }
+
+  // 2. 计算共同高风险（所有报告交集）
+  const intersection = flaggedSets.reduce<Set<string>>((acc, current, idx) => {
+    if (idx === 0) {
+      return new Set(current);
+    }
+    return new Set([...acc].filter((item) => current.has(item)));
+  }, new Set<string>());
+
+  // 3. 每份报告的独有高风险（差集）
+  const exclusives = flaggedSets.map((current, idx) => {
+    const others = flaggedSets.filter((_, otherIdx) => otherIdx !== idx);
+    return [...current].filter((item) => !others.some((set) => set.has(item)));
+  });
+
+  return (
+    <SectionCard
+      title="论断校验差异"
+      description="把 fact-check 报告中标红的『暂未支撑』论断按交集 / 差集对比，定位共同薄弱点和差异。"
+    >
+      <div className="grid gap-4 lg:grid-cols-2">
+        <article
+          className="p-5"
+          style={{
+            background: "#ffffff",
+            border: "1px solid #e3e8ee",
+            borderRadius: "12px",
+          }}
+        >
+          <p
+            style={{
+              color: "#64748b",
+              fontSize: "11px",
+              fontWeight: 600,
+              textTransform: "uppercase",
+              letterSpacing: "0.2em",
+            }}
+          >
+            共同高风险论断
+          </p>
+          {intersection.size ? (
+            <ul className="mt-3 space-y-2 text-sm leading-6" style={{ color: "#273951" }}>
+              {[...intersection].map((claim, idx) => (
+                <li
+                  key={idx}
+                  className="px-3 py-2"
+                  style={{
+                    background: "#fff5f7",
+                    border: "1px solid #f7c8d3",
+                    borderRadius: "12px",
+                  }}
+                >
+                  {claim}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-3 text-sm leading-6" style={{ color: "#64748b" }}>
+              所选报告暂无共同的高风险论断。
+            </p>
+          )}
+        </article>
+        <article
+          className="p-5"
+          style={{
+            background: "#ffffff",
+            border: "1px solid #e3e8ee",
+            borderRadius: "12px",
+          }}
+        >
+          <p
+            style={{
+              color: "#64748b",
+              fontSize: "11px",
+              fontWeight: 600,
+              textTransform: "uppercase",
+              letterSpacing: "0.2em",
+            }}
+          >
+            支撑率与 NLI 复核
+          </p>
+          <ul className="mt-3 space-y-2 text-sm leading-6" style={{ color: "#273951" }}>
+            {reports.map((report, idx) => {
+              const factCheck = report.fact_check_report;
+              if (!factCheck) {
+                return (
+                  <li key={idx} className="px-3 py-2"
+                    style={{ background: "#f6f9fc", border: "1px solid #e3e8ee", borderRadius: "12px" }}>
+                    报告 {idx + 1}：未生成 fact-check 报告
+                  </li>
+                );
+              }
+              const supportRate = Math.round(factCheck.overall_score * 100);
+              return (
+                <li key={idx} className="px-3 py-2"
+                  style={{ background: "#f6f9fc", border: "1px solid #e3e8ee", borderRadius: "12px" }}>
+                  <span style={{ color: "#0d253d", fontWeight: 600 }}>报告 {idx + 1}</span>
+                  ：支撑率 {supportRate}%，论断 {factCheck.total_claims} 条，
+                  暂未支撑 {factCheck.unsupported_count} 条
+                  {factCheck.nli_verified_count !== undefined ? `，NLI 复核 ${factCheck.nli_verified_count} 条` : ""}
+                </li>
+              );
+            })}
+          </ul>
+        </article>
+      </div>
+      <div className="mt-4 grid gap-4 lg:grid-cols-3">
+        {reports.map((report, idx) => (
+          <article
+            key={`exclusive-${idx}`}
+            className="p-5"
+            style={{
+              background: "#ffffff",
+              border: "1px solid #e3e8ee",
+              borderRadius: "12px",
+            }}
+          >
+            <p
+              style={{
+                color: "#64748b",
+                fontSize: "11px",
+                fontWeight: 600,
+                textTransform: "uppercase",
+                letterSpacing: "0.2em",
+              }}
+            >
+              报告 {idx + 1} · 独有高风险
+            </p>
+            {exclusives[idx].length ? (
+              <ul className="mt-3 space-y-2 text-sm leading-6" style={{ color: "#273951" }}>
+                {exclusives[idx].map((claim, cIdx) => (
+                  <li
+                    key={cIdx}
+                    className="px-3 py-2"
+                    style={{
+                      background: "#f6f9fc",
+                      border: "1px solid #e3e8ee",
+                      borderRadius: "12px",
+                    }}
+                  >
+                    {claim}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-3 text-sm leading-6" style={{ color: "#64748b" }}>
+                与其它报告高度一致，暂无独有的高风险论断。
+              </p>
+            )}
+          </article>
+        ))}
+      </div>
+    </SectionCard>
   );
 }
 

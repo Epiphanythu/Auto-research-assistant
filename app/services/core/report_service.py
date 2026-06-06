@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Generator
+from typing import Generator, Optional
 
 from app.api_error import APIError
+from app.config import get_settings
 from app.models.research_models import (
-    ClarificationResult,
     ComparisonSummary,
-    GapReport,
-    ResearchBrief,
+    DebateRound,
     ResearchPlan,
     ResearchReport,
     ResearchRequest,
@@ -19,6 +18,11 @@ from app.models.research_models import (
     ReviewReport,
     SSEEvent,
     SynthesisReliability,
+)
+from app.services.infrastructure.report_archive_service import ReportArchiveService
+from app.services.infrastructure.structured_logging import (
+    LLMCallStats,
+    llm_stats_scope,
 )
 
 logger = logging.getLogger(__name__)
@@ -55,10 +59,23 @@ class ReportService:
             return report_data
         return ResearchReport(**report_data)
 
-    def generate_report_stream(self, request: ResearchRequest) -> Generator[SSEEvent, None, None]:
+    def generate_report_stream(
+        self,
+        request: ResearchRequest,
+        replay_report_id: Optional[str] = None,
+    ) -> Generator[SSEEvent, None, None]:
         """generate_report_stream LangGraph 驱动的流式报告生成。"""
         from app.services.core.llm_service import LLMService
         from app.services.core.research_graph import build_research_graph
+
+        # 1. Replay 模式：直接基于归档报告回放合成事件，不再触发 LangGraph
+        settings = get_settings()
+        target_replay_id = replay_report_id or (
+            settings.get_replay_report_id() if settings.is_replay_mode_enabled() else ""
+        )
+        if target_replay_id:
+            yield from self._replay_archived_report(request, target_replay_id)
+            return
 
         logger.info(
             "ReportService.generate_report_stream start, topic=%s, max_papers=%s",
@@ -76,22 +93,25 @@ class ReportService:
         }
 
         accumulated: dict = {"stage_history": []}
+        # 1. 进入 LLM 调用统计作用域，整个图运行期间所有 LLM 调用都会落到此 stats
+        stats = LLMCallStats()
 
         try:
-            for update in graph.stream(initial_state, stream_mode="updates"):
-                node_name = list(update.keys())[0]
-                node_output = update[node_name]
+            with llm_stats_scope(stats):
+                for update in graph.stream(initial_state, stream_mode="updates"):
+                    node_name = list(update.keys())[0]
+                    node_output = update[node_name]
 
-                for event in node_output.get("events", []):
-                    yield event
+                    for event in node_output.get("events", []):
+                        yield event
 
-                for key, value in node_output.items():
-                    if key == "events":
-                        continue
-                    if key == "stage_history":
-                        accumulated.setdefault("stage_history", []).extend(value)
-                    else:
-                        accumulated[key] = value
+                    for key, value in node_output.items():
+                        if key == "events":
+                            continue
+                        if key == "stage_history":
+                            accumulated.setdefault("stage_history", []).extend(value)
+                        else:
+                            accumulated[key] = value
         except Exception as error:
             logger.exception("LangGraph stream failed: %s", error)
             yield SSEEvent(
@@ -104,10 +124,6 @@ class ReportService:
         topic = accumulated.get("clarified_topic", request.get_topic())
         report = ResearchReport(
             request=request,
-            clarification=ClarificationResult(
-                clarified_topic=topic, research_goal="", scope="", constraints=[],
-            ),
-            brief=ResearchBrief(topic=topic, objective=""),
             plan=accumulated.get("plan", ResearchPlan(
                 normalized_topic=topic, search_keywords=[], focus_areas=[], output_sections=[],
             )),
@@ -116,19 +132,64 @@ class ReportService:
             full_text_documents=accumulated.get("full_text_documents", []),
             insights=accumulated.get("insights", []),
             evidence_bundles=accumulated.get("evidence_bundles", []),
-            gap_report=accumulated.get("gap_report", GapReport()),
             comparison=accumulated.get("comparison", ComparisonSummary(overview="")),
             review_report=accumulated.get("review_report", ReviewReport(verdict="revision_needed")),
             synthesis_reliability=accumulated.get("synthesis_reliability"),
             stage_history=accumulated.get("stage_history", []),
             research_note=accumulated.get("research_note", ""),
             next_actions=accumulated.get("next_actions", []),
+            debate_log=accumulated.get("debate_log", []),
+            unit_syntheses=accumulated.get("unit_syntheses", []),
+            fact_check_report=accumulated.get("fact_check_report"),
+            contradictions=accumulated.get("contradictions", []),
+            llm_call_stats=stats.to_dict(),
         )
 
         yield SSEEvent(
             event_type="final_report", stage="finalize",
             message="研究完成！", progress=1.0,
             data=report.model_dump(),
+        )
+
+    def _replay_archived_report(
+        self,
+        request: ResearchRequest,
+        report_id: str,
+    ) -> Generator[SSEEvent, None, None]:
+        """_replay_archived_report 基于归档报告生成合成 SSE 事件序列。"""
+        # 1. 加载归档报告，失败时直接抛 APIError 给上层兜底
+        archive_service = ReportArchiveService()
+        report = archive_service.get_report(report_id)
+        logger.info(
+            "ReportService._replay_archived_report start, replay_id=%s, topic=%s",
+            report_id, report.request.topic,
+        )
+        # 2. 按归档的 stage_history 逐阶段产出 stage_start + stage_complete
+        stage_count = max(len(report.stage_history), 1)
+        for index, stage in enumerate(report.stage_history):
+            base_progress = (index / stage_count) * 0.95
+            yield SSEEvent(
+                event_type="stage_start",
+                stage=stage.stage,
+                message=f"[Replay] 进入阶段：{stage.stage}",
+                progress=round(base_progress, 3),
+            )
+            yield SSEEvent(
+                event_type="stage_complete",
+                stage=stage.stage,
+                message=f"[Replay] {stage.summary}",
+                progress=round(base_progress + (1.0 / stage_count) * 0.95, 3),
+                data={"duration_ms": stage.duration_ms, "status": stage.status},
+            )
+        # 3. 用归档报告本身覆盖 request，便于前端正确展示原始上下文
+        replay_report_dict = report.model_dump()
+        replay_report_dict["request"] = request.model_dump()
+        yield SSEEvent(
+            event_type="final_report",
+            stage="finalize",
+            message="[Replay] 研究报告回放完成",
+            progress=1.0,
+            data=replay_report_dict,
         )
 
     # ── Static helpers (kept for test compatibility) ──
@@ -145,18 +206,17 @@ class ReportService:
     @staticmethod
     def _ensure_research_units(
         research_units: list[ResearchUnit],
-        brief: ResearchBrief,
+        topic: str,
     ) -> list[ResearchUnit]:
         """_ensure_research_units 确保至少存在一个研究单元。"""
         if research_units:
             return research_units
-        fallback_question = brief.key_questions[0] if brief.key_questions else brief.objective
         return [
             ResearchUnit(
                 unit_id="unit-1",
-                question=fallback_question,
-                focus=brief.topic,
-                search_queries=[brief.topic],
+                question=f"调研「{topic}」的核心方法与最新进展",
+                focus=topic,
+                search_queries=[topic],
                 completion_definition="形成可引用的结构化研究结论。",
             )
         ]

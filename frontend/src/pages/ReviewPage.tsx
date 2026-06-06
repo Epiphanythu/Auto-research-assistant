@@ -1,9 +1,12 @@
 import { EmptyState } from "@/components/EmptyState";
 import {
+  ContradictionPanel,
+  FactCheckPanel,
   GapReportPanel,
   InsightList,
   OverviewPanel,
   ReviewDecisionPanel,
+  UnitSynthesisPanel,
 } from "@/components/ReportPanels";
 import { ReportExportPanel } from "@/components/ReportExportPanel";
 import { useResearchStore } from "@/store/researchStore";
@@ -24,7 +27,9 @@ export default function ReviewPage() {
     <div className="space-y-6">
       <ReportExportPanel report={report} />
       <ReviewDecisionPanel reviewReport={report.review_report} />
-      <GapReportPanel gapReport={report.gap_report} />
+      <FactCheckPanel report={report.fact_check_report} />
+      <ContradictionPanel contradictions={report.contradictions ?? []} />
+      <GapReportPanel comparison={report.comparison} />
       <OverviewPanel
         overview={report.comparison.overview}
         trends={report.comparison.trends}
@@ -33,6 +38,7 @@ export default function ReviewPage() {
         researchNote={report.research_note}
         nextActions={report.next_actions}
       />
+      <UnitSynthesisPanel syntheses={report.unit_syntheses ?? []} papers={report.papers ?? []} />
       <InsightList insights={report.insights} />
     </div>
   );

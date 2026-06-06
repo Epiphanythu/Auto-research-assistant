@@ -77,6 +77,56 @@
   --nav-height: 64px;
 }
 
+/* ─── Dark Mode Overrides ───
+ * 仅做基础变量翻转 + 关键面板底色覆盖；
+ * 业务组件中大量内联 background:#ffffff 等无法被 CSS 变量直接覆盖，
+ * 因此通过属性选择器进行兜底覆写，保证暗色下不出现刺眼白卡片。
+ */
+html.dark {
+  --color-ink: #e2e8f0;
+  --color-ink-secondary: #cbd5f5;
+  --color-ink-mute: #94a3b8;
+  --color-canvas: #0f172a;
+  --color-canvas-soft: #111c33;
+  --color-canvas-cream: #1a2238;
+  --color-hairline: #1f2a44;
+  color-scheme: dark;
+}
+
+html.dark body {
+  background-color: var(--color-canvas-soft);
+  color: var(--color-ink);
+}
+
+/* 兜底覆盖：将业务组件中硬编码的浅色 inline 样式映射为暗色 */
+html.dark [style*="background: #ffffff"],
+html.dark [style*="background:#ffffff"],
+html.dark [style*="background: #fff"] {
+  background: #111c33 !important;
+}
+html.dark [style*="background: #f6f9fc"],
+html.dark [style*="background:#f6f9fc"] {
+  background: #0f172a !important;
+}
+html.dark [style*="background: #fff5f7"],
+html.dark [style*="background: #fff5f5"] {
+  background: #2a1620 !important;
+}
+html.dark [style*="border: 1px solid #e3e8ee"],
+html.dark [style*="border:1px solid #e3e8ee"] {
+  border-color: #1f2a44 !important;
+}
+html.dark [style*="color: #0d253d"] {
+  color: #e2e8f0 !important;
+}
+html.dark [style*="color: #273951"] {
+  color: #cbd5f5 !important;
+}
+html.dark [style*="color: #64748b"],
+html.dark [style*="color: #64748d"] {
+  color: #94a3b8 !important;
+}
+
 /* ─── Global Resets ─── */
 
 *,

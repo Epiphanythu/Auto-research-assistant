@@ -11,6 +11,7 @@ type ReportHistoryPanelProps = {
   compareSelection: string[];
   onToggleCompare: (reportId: string) => void;
   onClearCompare: () => void;
+  onDelete: (reportId: string) => Promise<void>;
 };
 
 type SortOption = "created_desc" | "created_asc" | "support_desc" | "support_asc";
@@ -23,6 +24,7 @@ export function ReportHistoryPanel({
   compareSelection,
   onToggleCompare,
   onClearCompare,
+  onDelete,
 }: ReportHistoryPanelProps) {
   const [topicKeyword, setTopicKeyword] = useState("");
   const [verdictFilter, setVerdictFilter] = useState("all");
@@ -328,6 +330,31 @@ export function ReportHistoryPanel({
                   {item.report_id}
                 </p>
                 <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm(`确定删除报告「${item.topic}」？此操作不可撤销。`)) {
+                        void onDelete(item.report_id);
+                      }
+                    }}
+                    className="inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-xs transition"
+                    style={{
+                      background: "#f6f9fc",
+                      border: "1px solid #e3e8ee",
+                      color: "#64748b",
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.borderColor = "#ea2261";
+                      e.currentTarget.style.color = "#ea2261";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.borderColor = "#e3e8ee";
+                      e.currentTarget.style.color = "#64748b";
+                    }}
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    删除
+                  </button>
                   <label
                     className="inline-flex cursor-pointer items-center gap-2 rounded-full px-3 py-1.5 text-xs transition"
                     style={{

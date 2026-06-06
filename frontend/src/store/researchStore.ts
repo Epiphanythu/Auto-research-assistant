@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 
 import type {
   ReportArchiveSummary,
@@ -14,6 +15,7 @@ import {
   requestReportHistory,
   requestTopicRecommendations,
 } from "@/utils/api";
+import { normalizeReport } from "@/utils/normalizeReport";
 
 type RequestStatus = "idle" | "loading" | "success" | "error";
 type HistoryStatus = "idle" | "loading" | "success" | "error";
@@ -50,6 +52,9 @@ type ResearchStore = {
   sseConnected: boolean;
   sseError: string | null;
   sseFinalData: Record<string, unknown> | null;
+  // 当前任务 task_id（用于刷新后续连）与已收事件游标
+  activeTaskId: string | null;
+  activeTaskCursor: number;
   // Actions
   runResearch: (payload: ResearchRequest) => Promise<void>;
   fetchReportHistory: () => Promise<void>;
@@ -67,7 +72,9 @@ type ResearchStore = {
   fetchRecommendations: (topic: string) => Promise<void>;
 };
 
-export const useResearchStore = create<ResearchStore>((set) => ({
+export const useResearchStore = create<ResearchStore>()(
+  persist(
+    (set) => ({
   requestStatus: "idle",
   report: null,
   activeReportId: null,
@@ -85,6 +92,8 @@ export const useResearchStore = create<ResearchStore>((set) => ({
   sseConnected: false,
   sseError: null,
   sseFinalData: null,
+  activeTaskId: null,
+  activeTaskCursor: 0,
 
   runResearch: async (payload) => {
     set({
@@ -148,7 +157,7 @@ export const useResearchStore = create<ResearchStore>((set) => ({
   loadArchivedReport: async (reportId) => {
     set({ requestStatus: "loading", errorState: null });
     try {
-      const report = await requestArchivedReport(reportId);
+      const report = normalizeReport(await requestArchivedReport(reportId));
       set({
         report,
         activeReportId: reportId,
@@ -170,12 +179,13 @@ export const useResearchStore = create<ResearchStore>((set) => ({
 
   clearError: () => set({ errorState: null }),
 
-  setReportFromStream: (report: ResearchReport) => {
+  setReportFromStream: (report: Parameters<typeof normalizeReport>[0]) => {
+    const normalized = normalizeReport(report);
     set({
-      report,
+      report: normalized,
       activeReportId: null,
       requestStatus: "success",
-      lastRequest: report.request,
+      lastRequest: normalized.request,
     });
   },
 
@@ -213,4 +223,19 @@ export const useResearchStore = create<ResearchStore>((set) => ({
       set({ recommendationLoading: false });
     }
   },
-}));
+}),
+    {
+      name: "research-storage",
+      version: 4,
+      partialize: (state) => ({
+        report: state.report,
+        activeReportId: state.activeReportId,
+        requestStatus: state.requestStatus,
+        lastRequest: state.lastRequest,
+        sseEvents: state.sseEvents,
+        activeTaskId: state.activeTaskId,
+        activeTaskCursor: state.activeTaskCursor,
+      }),
+    },
+  ),
+);

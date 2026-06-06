@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from typing import Any, Dict, Generator, List, Optional
 
@@ -11,11 +12,26 @@ import requests
 
 from app.api_error import APIError
 from app.config import get_settings
+from app.constant.llm_constant import (
+    LLM_EVENT_CACHE_HIT,
+    LLM_EVENT_CACHE_WRITE,
+    LLM_EVENT_FAILURE,
+    LLM_EVENT_REQUEST,
+    LLM_EVENT_SUCCESS,
+)
+from app.services.infrastructure.llm_cache import LLMCache
+from app.services.infrastructure.structured_logging import (
+    emit_event,
+    get_current_stats,
+)
 
 logger = logging.getLogger(__name__)
 
 LLM_MAX_RETRIES = 5
 LLM_RETRY_BACKOFF = 3.0  # seconds, exponential base (3s → 6s → 12s → 24s → 48s)
+# 进程级并发上限，避免短时间内 fan-out 触发 GLM 等 provider 的 CC（concurrent calls）限速
+LLM_MAX_CONCURRENCY = 2
+_LLM_CONCURRENCY_SEMAPHORE = threading.BoundedSemaphore(LLM_MAX_CONCURRENCY)
 
 
 class LLMConfigurationError(APIError):
@@ -62,6 +78,10 @@ class LLMService:
 
     def __init__(self) -> None:
         self.settings = get_settings()
+        # 1. 缓存初始化：仅在显式开启时实例化，避免无谓创建目录
+        self._cache: Optional[LLMCache] = None
+        if self.settings.is_llm_cache_enabled():
+            self._cache = LLMCache(self.settings.get_llm_cache_dir())
 
     def is_enabled(self) -> bool:
         """is_enabled 判断是否启用外部大模型。"""
@@ -189,10 +209,33 @@ class LLMService:
         temperature: float,
         max_tokens: Optional[int],
     ) -> Dict[str, Any]:
-        """_do_ask_json 单次 JSON 请求。"""
+        """_do_ask_json 单次 JSON 请求（含缓存与结构化日志）。"""
+        model = self.settings.get_llm_model()
+        # 1. 命中缓存优先返回；缓存键含 model + system + user + temperature
+        cache_key: Optional[str] = None
+        if self._cache is not None:
+            cache_key = LLMCache.build_key(
+                model=model,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                temperature=temperature,
+            )
+            cached = self._cache.load(cache_key)
+            if cached is not None:
+                emit_event(
+                    logger, LLM_EVENT_CACHE_HIT,
+                    model=model, cache_key=cache_key[:12],
+                    user_prompt_len=len(user_prompt),
+                )
+                stats = get_current_stats()
+                if stats is not None:
+                    stats.add_call(cache_hit=True)
+                return cached
+
+        # 2. 实际请求模型服务
         _t0 = time.monotonic()
         body: Dict[str, Any] = {
-            "model": self.settings.get_llm_model(),
+            "model": model,
             "temperature": temperature,
             "response_format": {"type": "json_object"},
             "messages": [
@@ -203,48 +246,68 @@ class LLMService:
         if max_tokens:
             body["max_tokens"] = max_tokens
 
-        logger.info(
-            "LLMService.ask_json request, model=%s, temp=%.2f, system_len=%d, user_len=%d",
-            self.settings.get_llm_model(), temperature,
-            len(system_prompt), len(user_prompt),
+        emit_event(
+            logger, LLM_EVENT_REQUEST,
+            model=model, temperature=temperature,
+            system_prompt_len=len(system_prompt),
+            user_prompt_len=len(user_prompt),
         )
 
         try:
-            response = requests.post(
-                f"{self.settings.get_llm_base_url().rstrip('/')}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self.settings.get_llm_api_key()}",
-                    "Content-Type": "application/json",
-                },
-                json=body,
-                timeout=self.settings.get_request_timeout_seconds(),
-            )
+            # 1. 通过进程级信号量限制并发，避免触发 provider 端 CC 限速
+            with _LLM_CONCURRENCY_SEMAPHORE:
+                response = requests.post(
+                    f"{self.settings.get_llm_base_url().rstrip('/')}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.settings.get_llm_api_key()}",
+                        "Content-Type": "application/json",
+                    },
+                    json=body,
+                    timeout=self.settings.get_request_timeout_seconds(),
+                )
             response.raise_for_status()
         except requests.RequestException as error:
-            logger.info("LLMService.ask_json request failed, error=%s", error)
+            emit_event(logger, LLM_EVENT_FAILURE, model=model, error=str(error))
             raise LLMRequestError(f"调用模型服务失败：{error}") from error
 
         try:
             payload = response.json()
             content = payload["choices"][0]["message"]["content"]
         except (ValueError, KeyError, IndexError, TypeError) as error:
-            logger.info("LLMService.ask_json parse failed, error=%s", error)
+            emit_event(logger, LLM_EVENT_FAILURE, model=model, error=str(error))
             raise LLMResponseFormatError("模型返回结果无法解析为合法 JSON 对象。") from error
 
-        # Try direct JSON parse first, then extract JSON from markdown code blocks
+        # 3. 解析与字段提取（兼容代码块包裹）
         parsed_payload = self._extract_json(content)
         if parsed_payload is None:
-            logger.info("LLMService.ask_json content is not JSON: %s", content[:200])
+            emit_event(
+                logger, LLM_EVENT_FAILURE,
+                model=model, error="not_json", preview=content[:200],
+            )
             raise LLMResponseFormatError("模型返回结果不是合法的 JSON 对象。")
-        _elapsed = int((time.monotonic() - _t0) * 1000)
-        usage = payload.get("usage", {})
-        logger.info(
-            "LLMService.ask_json success, elapsed_ms=%d, prompt_tokens=%s, completion_tokens=%s, keys=%s",
-            _elapsed,
-            usage.get("prompt_tokens", "?"),
-            usage.get("completion_tokens", "?"),
-            list(parsed_payload.keys()),
+
+        # 4. 成功事件 + 全局统计累计 + 写缓存
+        elapsed_ms = int((time.monotonic() - _t0) * 1000)
+        usage = payload.get("usage", {}) or {}
+        prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+        completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+        emit_event(
+            logger, LLM_EVENT_SUCCESS,
+            model=model, elapsed_ms=elapsed_ms,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            keys=list(parsed_payload.keys()),
         )
+        stats = get_current_stats()
+        if stats is not None:
+            stats.add_call(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                elapsed_ms=elapsed_ms,
+            )
+        if self._cache is not None and cache_key is not None:
+            self._cache.save(cache_key, parsed_payload)
+            emit_event(logger, LLM_EVENT_CACHE_WRITE, cache_key=cache_key[:12])
         return parsed_payload
 
     @staticmethod
@@ -326,15 +389,17 @@ class LLMService:
             body["max_tokens"] = max_tokens
 
         try:
-            response = requests.post(
-                f"{self.settings.get_llm_base_url().rstrip('/')}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self.settings.get_llm_api_key()}",
-                    "Content-Type": "application/json",
-                },
-                json=body,
-                timeout=self.settings.get_request_timeout_seconds(),
-            )
+            # 1. 通过进程级信号量限制并发，避免触发 provider 端 CC 限速
+            with _LLM_CONCURRENCY_SEMAPHORE:
+                response = requests.post(
+                    f"{self.settings.get_llm_base_url().rstrip('/')}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.settings.get_llm_api_key()}",
+                        "Content-Type": "application/json",
+                    },
+                    json=body,
+                    timeout=self.settings.get_request_timeout_seconds(),
+                )
             response.raise_for_status()
         except requests.RequestException as error:
             raise LLMRequestError(f"调用模型服务失败：{error}") from error
