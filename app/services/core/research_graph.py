@@ -53,7 +53,6 @@ from app.services.infrastructure.structured_logging import (
     emit_event,
     get_current_stats,
 )
-from app.services.pipeline.debate_service import DebateService
 from app.services.pipeline.evidence_quality_service import EvidenceQualityService
 from app.services.pipeline.extraction_service import ExtractionService
 from app.services.pipeline.fact_check_service import FactCheckService
@@ -366,6 +365,7 @@ def plan_node(state: GraphState) -> dict:
         event_type="stage_complete", stage="plan",
         message=f"检索规划完成（{len(search_keywords)} 个关键词，{len(research_units)} 个研究单元）",
         progress=0.2,
+        data={"duration_ms": duration_ms},
     ))
 
     return {
@@ -427,6 +427,7 @@ def search_node(state: GraphState) -> dict:
         events.append(SSEEvent(
             event_type="stage_complete", stage=stage_label,
             message="未检索到可用论文", progress=progress_base + 0.05,
+            data={"duration_ms": duration_ms},
         ))
         return {
             "papers": [],
@@ -490,6 +491,7 @@ def search_node(state: GraphState) -> dict:
         event_type="stage_complete", stage=stage_label,
         message=f"已完成论文检索与提取（{len(papers)} 篇论文，{len(insights)} 条洞察）",
         progress=progress_base + 0.15,
+        data={"duration_ms": duration_ms},
     ))
 
     return {
@@ -551,6 +553,7 @@ def synthesize_node(state: GraphState) -> dict:
         event_type="stage_complete", stage="evidence",
         message=f"已生成 {len(evidence_bundles)} 个证据包",
         progress=progress_base + 0.08,
+        data={"duration_ms": _dur},
     ))
 
     # 2. 按 ResearchUnit 并行综合，每个研究问题独立产出小节
@@ -576,6 +579,7 @@ def synthesize_node(state: GraphState) -> dict:
         event_type="stage_complete", stage="unit_synthesis",
         message=f"已完成 {len(unit_syntheses)} 个研究单元小节",
         progress=progress_base + 0.2,
+        data={"duration_ms": _dur},
     ))
 
     # 3. 全局聚合：把多个 UnitSynthesis 合成 ComparisonSummary + research_note + next_actions
@@ -598,6 +602,7 @@ def synthesize_node(state: GraphState) -> dict:
         event_type="stage_complete", stage="compare",
         message="已完成全局聚合与研究笔记生成",
         progress=progress_base + 0.3,
+        data={"duration_ms": _dur},
     ))
 
     # 4. 启发式补充研究空白与回检建议（综合 bundle + unit + 论文覆盖率）
@@ -637,11 +642,8 @@ def debate_node(state: GraphState) -> dict:
     events: list[SSEEvent] = []
     stage_history: list[StageTransition] = []
 
-    topic = state.get("clarified_topic", state.get("topic", ""))
     research_note = state.get("research_note", "")
-    comparison = state.get("comparison", ComparisonSummary(overview=""))
     insights = state.get("insights", [])
-    next_actions = state.get("next_actions", [])
     search_iteration = state.get("search_iteration", 0)
     progress_base = 0.65 if search_iteration <= 1 else 0.75
 
@@ -652,79 +654,27 @@ def debate_node(state: GraphState) -> dict:
             "stage_history": stage_history,
         }
 
-    # 1. 节流：研究笔记已较扎实且无显著 gap 时跳过 debate，避免无谓 LLM 调用
-    if DebateService.should_skip(research_note, comparison):
-        emit_event(
-            logger, GRAPH_EVENT_NODE_SKIP,
-            node="debate", reason="reliable_no_gap",
-        )
-        stage_history.append(StageTransition(
-            stage="debate", status="skipped",
-            summary="综合已较完整且无显著 gap，跳过辩论",
-            duration_ms=0,
-        ))
-        events.append(SSEEvent(
-            event_type="stage_complete", stage="debate",
-            message="跳过辩论（综合已较完整且无显著 gap）",
-            progress=progress_base + 0.1,
-        ))
-        return {
-            "debate_log": [],
-            "events": events,
-            "stage_history": stage_history,
-        }
-
-    events.append(SSEEvent(
-        event_type="stage_start", stage="debate",
-        message="正在启动 Critic-Writer 多轮辩论...", progress=progress_base,
-    ))
-    _emit_node_start("debate", iteration=search_iteration)
-    _t0 = time.monotonic()
-
-    debate_service = DebateService()
-    revised_outputs, debate_log = debate_service.run_debate(
-        topic=topic,
-        research_note=research_note,
-        comparison=comparison,
-        insights=insights,
-        next_actions=next_actions,
+    # 1. 全局开关：默认关闭辩论以节省 ~150s LLM 推理时间（reviewer + fact_check 仍提供质量护栏）
+    emit_event(
+        logger, GRAPH_EVENT_NODE_SKIP,
+        node="debate", reason="disabled_for_speed",
     )
-
-    revised_note = revised_outputs["research_note"]
-    revised_comparison = revised_outputs["comparison"]
-    revised_actions = revised_outputs["next_actions"]
-
-    total_rounds = len(debate_log)
-    final_passed = debate_log[-1].passed if debate_log else True
-    _dur = int((time.monotonic() - _t0) * 1000)
     stage_history.append(StageTransition(
-        stage="debate", status="completed",
-        summary=f"辩论完成，{total_rounds} 轮，passed={final_passed}",
-        duration_ms=_dur,
+        stage="debate", status="skipped",
+        summary="已关闭辩论以节省 LLM 调用",
+        duration_ms=0,
     ))
-    _emit_node_complete(
-        "debate", _dur,
-        rounds=total_rounds, passed=final_passed,
-    )
-
-    verdict_text = "质量达标" if final_passed else "仍有改进空间"
     events.append(SSEEvent(
         event_type="stage_complete", stage="debate",
-        message=f"辩论完成（{total_rounds} 轮，{verdict_text}）",
+        message="跳过辩论（已关闭以节省时间）",
         progress=progress_base + 0.1,
+        data={"duration_ms": 0},
     ))
-
-    result = {
-        "research_note": revised_note,
-        "next_actions": revised_actions,
-        "debate_log": debate_log,
+    return {
+        "debate_log": [],
         "events": events,
         "stage_history": stage_history,
     }
-    if revised_comparison is not comparison:
-        result["comparison"] = revised_comparison
-
-    return result
 
 
 # ── Node: review ────────────────────────────────────────────────────────────────
@@ -767,6 +717,7 @@ def review_node(state: GraphState) -> dict:
         event_type="stage_complete", stage="reliability",
         message=f"证据可靠性评估完成（{synthesis_reliability.strong_count} 强 / {synthesis_reliability.moderate_count} 中 / {synthesis_reliability.weak_count} 弱）",
         progress=progress_base + 0.08,
+        data={"duration_ms": _dur},
     ))
 
     # Build a lightweight citation verification for reviewer compatibility
@@ -803,6 +754,7 @@ def review_node(state: GraphState) -> dict:
         event_type="stage_complete", stage="review",
         message=f"质量审查完成（{review_report.verdict}）",
         progress=progress_base + 0.15,
+        data={"duration_ms": _dur},
     ))
 
     _emit_node_complete(
@@ -875,6 +827,7 @@ def fact_check_node(state: GraphState) -> dict:
             f"{fact_check_report.overall_score:.2f}）"
         ),
         progress=progress_base + 0.05,
+        data={"duration_ms": _dur},
     ))
 
     _emit_node_complete(
@@ -936,6 +889,12 @@ def finalize_node(state: GraphState) -> dict:
         summary="研究流程结束", duration_ms=duration_ms,
     ))
     _emit_node_complete("finalize", duration_ms)
+    events.append(SSEEvent(
+        event_type="stage_complete", stage="finalize",
+        message="研究流程结束",
+        progress=1.0,
+        data={"duration_ms": duration_ms},
+    ))
 
     return {
         "events": events,

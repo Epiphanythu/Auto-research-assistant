@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import type { LLMCallStats, SSEEvent } from "@/types/research";
+import type { LLMCallStats, SSEEvent, StageTransition } from "@/types/research";
 
 type Props = {
   events: SSEEvent[];
@@ -118,6 +118,49 @@ export default function ProgressPanel({
   const latestEvent = events.length > 0 ? events[events.length - 1] : null;
   const startTimeRef = useRef<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  const finalReportEvent = events.find((event) => event.event_type === "final_report");
+  const finalStageDurations = new Map<string, number>();
+  const stageHistory = (finalReportEvent?.data as { stage_history?: StageTransition[] } | undefined)
+    ?.stage_history ?? [];
+  for (const item of stageHistory) {
+    if (item.stage && typeof item.duration_ms === "number" && item.duration_ms >= 0) {
+      finalStageDurations.set(item.stage, item.duration_ms);
+    }
+  }
+
+  // 1. 阶段耗时统计：优先使用后端事件 data.duration_ms（重新加载页面后仍准确），
+  //    缺省时回退到前端本地时钟近似（首次跑通时使用）
+  const stageTimingsRef = useRef<Map<string, { start?: number; end?: number; backendMs?: number }>>(new Map());
+  const seenEventIndexRef = useRef<number>(0);
+  for (let i = seenEventIndexRef.current; i < events.length; i += 1) {
+    const ev = events[i];
+    if (!ev?.stage) continue;
+    const map = stageTimingsRef.current;
+    const cur = map.get(ev.stage) ?? {};
+    if (ev.event_type === "stage_start" && cur.start === undefined) {
+      cur.start = Date.now();
+    } else if (ev.event_type === "stage_complete") {
+      if (cur.end === undefined) cur.end = Date.now();
+      const backendMs = (ev.data as { duration_ms?: number } | undefined)?.duration_ms;
+      if (typeof backendMs === "number" && backendMs >= 0) {
+        cur.backendMs = backendMs;
+      }
+    }
+    map.set(ev.stage, cur);
+  }
+  seenEventIndexRef.current = events.length;
+
+  const stageDurationSec = (stage: string): number | null => {
+    const t = stageTimingsRef.current.get(stage);
+    const finalMs = finalStageDurations.get(stage);
+    if (typeof finalMs === "number") return Math.max(0, Math.round(finalMs / 1000));
+    if (!t) return null;
+    if (typeof t.backendMs === "number") return Math.max(0, Math.round(t.backendMs / 1000));
+    if (t.start !== undefined && t.end !== undefined) {
+      return Math.max(0, Math.round((t.end - t.start) / 1000));
+    }
+    return null;
+  };
 
   // Track elapsed time since first event
   useEffect(() => {
@@ -139,6 +182,36 @@ export default function ProgressPanel({
     return m > 0 ? `${m}m ${s}s` : `${s}s`;
   };
 
+  // 2. 总耗时：进行中=elapsed；已完成=各阶段 backendMs 之和（页面刷新后依然准确）
+  const totalDurationSec = (() => {
+    if (progress >= 1) {
+      let sumMs = 0;
+      let hasBackend = false;
+      if (finalStageDurations.size > 0) {
+        for (const [, ms] of finalStageDurations) {
+          sumMs += ms;
+        }
+        return Math.round(sumMs / 1000);
+      }
+      for (const [, v] of stageTimingsRef.current) {
+        if (typeof v.backendMs === "number") {
+          sumMs += v.backendMs;
+          hasBackend = true;
+        }
+      }
+      if (hasBackend) return Math.round(sumMs / 1000);
+      // 回退：本地时钟首末锚点差
+      let firstStart: number | undefined;
+      let lastEnd: number | undefined;
+      for (const [, v] of stageTimingsRef.current) {
+        if (v.start !== undefined && (firstStart === undefined || v.start < firstStart)) firstStart = v.start;
+        if (v.end !== undefined && (lastEnd === undefined || v.end > lastEnd)) lastEnd = v.end;
+      }
+      if (firstStart !== undefined && lastEnd !== undefined) return Math.round((lastEnd - firstStart) / 1000);
+    }
+    return elapsed;
+  })();
+
   /* Build an ordered list of unique stages that appeared */
   const seenStages = new Set<string>();
   const timelineStages: Array<{ stage: string; completed: boolean }> = [];
@@ -159,8 +232,7 @@ export default function ProgressPanel({
 
   const paperEvents = events.filter((e) => e.event_type === "paper_found");
 
-  // 1. 优先使用外部显式传入的统计；否则尝试从 final_report 事件中读取
-  const finalReportEvent = events.find((event) => event.event_type === "final_report");
+  // 3. 优先使用外部显式传入的统计；否则尝试从 final_report 事件中读取
   const finalStats = (finalReportEvent?.data as { llm_call_stats?: LLMCallStats } | undefined)
     ?.llm_call_stats;
   const stats: LLMCallStats | null = llmCallStats ?? finalStats ?? null;
@@ -194,7 +266,7 @@ export default function ProgressPanel({
               </span>
             </div>
             <span className="text-xs font-normal tabular-nums" style={{ color: "#64748d" }}>
-              {Math.round(progress * 100)}%{elapsed > 0 ? ` · ${formatElapsed(elapsed)}` : ""}
+              {Math.round(progress * 100)}%{totalDurationSec > 0 ? ` · ${formatElapsed(totalDurationSec)}` : ""}
             </span>
           </div>
 
@@ -242,21 +314,32 @@ export default function ProgressPanel({
         {/* ---- Stage timeline ---- */}
         <div className="px-5 py-4 max-h-72 overflow-y-auto">
           <ul className="space-y-2.5">
-            {timelineStages.map(({ stage, completed }) => (
-              <li key={stage} className="flex items-center gap-2.5">
-                {completed ? (
-                  <CheckmarkIcon className="shrink-0" />
-                ) : (
-                  <ArrowIcon className="shrink-0" />
-                )}
-                <span
-                  className="text-[13px] font-light leading-snug"
-                  style={{ color: completed ? "#0d253d" : "#665efd" }}
-                >
-                  {stageLabel(stage)}
-                </span>
-              </li>
-            ))}
+            {timelineStages.map(({ stage, completed }) => {
+              const dur = stageDurationSec(stage);
+              return (
+                <li key={stage} className="flex items-center gap-2.5">
+                  {completed ? (
+                    <CheckmarkIcon className="shrink-0" />
+                  ) : (
+                    <ArrowIcon className="shrink-0" />
+                  )}
+                  <span
+                    className="text-[13px] font-light leading-snug flex-1"
+                    style={{ color: completed ? "#0d253d" : "#665efd" }}
+                  >
+                    {stageLabel(stage)}
+                  </span>
+                  {dur !== null ? (
+                    <span
+                      className="text-[11px] font-light tabular-nums shrink-0"
+                      style={{ color: "#94a3b8" }}
+                    >
+                      {formatElapsed(dur)}
+                    </span>
+                  ) : null}
+                </li>
+              );
+            })}
 
             {paperEvents.map((event, i) => (
               <li key={`paper-${i}`} className="flex items-start gap-2.5">

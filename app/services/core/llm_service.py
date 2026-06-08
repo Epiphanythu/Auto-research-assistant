@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 LLM_MAX_RETRIES = 5
 LLM_RETRY_BACKOFF = 3.0  # seconds, exponential base (3s → 6s → 12s → 24s → 48s)
 # 进程级并发上限，避免短时间内 fan-out 触发 GLM 等 provider 的 CC（concurrent calls）限速
-LLM_MAX_CONCURRENCY = 2
+LLM_MAX_CONCURRENCY = 4
 _LLM_CONCURRENCY_SEMAPHORE = threading.BoundedSemaphore(LLM_MAX_CONCURRENCY)
 
 

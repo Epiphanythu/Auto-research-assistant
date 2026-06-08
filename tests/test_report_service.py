@@ -366,7 +366,9 @@ class TestGenerateReport:
         assert report.synthesis_reliability.overall_score > 0
         assert len(report.synthesis_reliability.claims) >= 1
         assert report.debate_log is not None
-        assert len(report.debate_log) >= 1
+        debate_stage = next((stage for stage in report.stage_history if stage.stage == "debate"), None)
+        assert debate_stage is not None
+        assert debate_stage.status in ("completed", "skipped")
         assert report.review_report.verdict in ("overall_pass", "revision_needed")
         assert len(report.stage_history) >= 8
         assert len(report.research_note) > 0
