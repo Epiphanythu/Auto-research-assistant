@@ -215,13 +215,21 @@ class ReportExportService:
             return "\n".join(["", "## 论文洞察", "暂无论文洞察。"])
         blocks = []
         for index, insight in enumerate(insights):
+            relevance_line = (
+                f"- 主题相关性：{round(insight.paper.topic_relevance_score * 100)}%"
+                f"（{insight.paper.relevance_reason or '暂无说明'}）\n"
+                if insight.paper.topic_relevance_score > 0 else ""
+            )
+            evidence_lines = self._format_evidence_snippets(insight)
             blocks.append(
                 f"### {index + 1}. {insight.paper.title}\n"
+                f"{relevance_line}"
                 f"- 问题：{insight.problem}\n"
                 f"- 方法：{insight.method}\n"
                 f"- 创新：{insight.innovation}\n"
                 f"- 发现：{insight.findings}\n"
-                f"- 局限：{insight.limitation}"
+                f"- 局限：{insight.limitation}\n"
+                f"- 证据片段：\n{evidence_lines}"
             )
         return "\n".join(["", "## 论文洞察", "\n\n".join(blocks)])
 
@@ -249,6 +257,17 @@ class ReportExportService:
         if not items:
             return "- 暂无"
         return "\n".join(f"- {item}" for item in items)
+
+    @staticmethod
+    def _format_evidence_snippets(insight: PaperInsight) -> str:
+        """_format_evidence_snippets 渲染单篇论文的关键证据片段。"""
+        if not insight.evidence:
+            return "  - 暂无"
+        return "\n".join(
+            f"  - [{item.section_kind or item.source or 'evidence'}] {item.snippet}"
+            f"{f'（{item.reason}）' if item.reason else ''}"
+            for item in insight.evidence[:3]
+        )
 
     @staticmethod
     def _format_claim_reliability(claims: List[ClaimReliability]) -> str:

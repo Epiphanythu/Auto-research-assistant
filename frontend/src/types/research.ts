@@ -35,6 +35,8 @@ export type Paper = {
   citation_count: number;
   tldr: string;
   doi: string;
+  topic_relevance_score?: number;
+  relevance_reason?: string;
 };
 
 export type PaperInsight = {

@@ -205,6 +205,26 @@ export function InsightList({ insights }: { insights: PaperInsight[] }) {
               <InfoRow label="发现" value={insight.findings} />
               <InfoRow label="局限" value={insight.limitation} />
             </dl>
+            {insight.evidence.length > 0 && (
+              <div className="mt-4" style={{ background: "#ffffff", border: "1px solid #e3e8ee", borderRadius: "12px", padding: "12px 14px" }}>
+                <p style={{ color: "#64748b", fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.22em" }}>
+                  证据片段
+                </p>
+                <ul className="mt-2 space-y-2">
+                  {insight.evidence.slice(0, 2).map((item, index) => (
+                    <li key={`${insight.paper.paper_id}-evidence-${index}`} style={{ color: "#273951", fontSize: "12px", lineHeight: 1.65 }}>
+                      <span style={{ color: "#533afd", fontWeight: 600 }}>
+                        {item.section_kind || item.source || "evidence"}
+                      </span>
+                      ：{item.snippet}
+                      {item.reason ? (
+                        <span style={{ color: "#64748b" }}>（{item.reason}）</span>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </article>
         ))}
       </div>

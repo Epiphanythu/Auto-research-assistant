@@ -25,6 +25,12 @@ from app.constant.paper_constant import (
     PAPER_SOURCE_PRIORITY,
     PAPER_SOURCE_CROSSREF,
     PAPER_SOURCE_SEMANTIC_SCHOLAR,
+    PAPER_RELEVANCE_FALLBACK_KEEP_RATIO,
+    PAPER_RELEVANCE_KEYWORD_STOPWORDS,
+    PAPER_RELEVANCE_MIN_KEEP_SCORE,
+    PAPER_RELEVANCE_PHRASE_WEIGHT,
+    PAPER_RELEVANCE_SUMMARY_WEIGHT,
+    PAPER_RELEVANCE_TITLE_WEIGHT,
     SEARCH_MAX_WORKERS,
 )
 from app.models.research_models import Paper, ResearchPlan, ResearchRequest
@@ -111,7 +117,8 @@ class SearchService:
                 suggestion="请检查外部学术检索源的可访问性、网络状态，或稍后重试。",
             )
 
-        papers = self._rank_papers(list(unique_papers.values()), normalized_queries, topic)
+        papers = self._annotate_relevance(list(unique_papers.values()), normalized_queries, topic)
+        papers = self._rank_papers(papers, normalized_queries, topic)
         papers = self._filter_by_relevance(papers, normalized_queries, topic, max_papers)
         logger.info(
             "SearchService.search_by_queries completed, unique=%d, returned=%d",
@@ -249,36 +256,86 @@ class SearchService:
         topic: str,
         max_papers: int,
     ) -> List[Paper]:
-        """过滤掉与主题明显不相关的论文。"""
-        if not papers or len(papers) <= max_papers:
+        """_filter_by_relevance 过滤与主题明显不相关的论文，并保留必要兜底数量。"""
+        if not papers:
             return papers
+        if len(papers) <= max_papers:
+            return papers[:max_papers]
 
-        query_keywords = _extract_query_keywords(queries, topic)
-        if not query_keywords:
-            return papers
+        # 1. 优先保留超过阈值的论文，从源头减少低相关论文进入抽取和报告。
+        filtered = [
+            paper for paper in papers
+            if paper.get_relevance_score() >= PAPER_RELEVANCE_MIN_KEEP_SCORE
+        ]
 
-        scored = []
-        for paper in papers:
-            text = f"{paper.get_title()} {paper.get_summary()}".lower()
-            overlap = sum(1 for kw in query_keywords if kw in text)
-            scored.append((overlap, paper))
-
-        max_overlap = max(s for s, _ in scored) if scored else 0
-        if max_overlap == 0:
-            return papers
-
-        threshold = max(1, max_overlap // 3)
-        filtered = [p for score, p in scored if score >= threshold]
-
-        if len(filtered) < max_papers:
-            remaining = [p for score, p in scored if score < threshold]
-            filtered.extend(remaining[: max_papers - len(filtered)])
+        # 2. 若主题很窄导致候选过少，保留少量最高分兜底，避免无报告可生成。
+        min_keep = max(1, min(max_papers, int(max_papers * PAPER_RELEVANCE_FALLBACK_KEEP_RATIO)))
+        if len(filtered) < min_keep:
+            seen_ids = {id(paper) for paper in filtered}
+            for paper in papers:
+                if id(paper) not in seen_ids:
+                    filtered.append(paper)
+                    seen_ids.add(id(paper))
+                if len(filtered) >= min_keep:
+                    break
 
         logger.info(
-            "SearchService._filter_by_relevance: %d papers, max_overlap=%d, threshold=%d, kept=%d",
-            len(papers), max_overlap, threshold, len(filtered),
+            "SearchService._filter_by_relevance: %d papers, threshold=%.2f, kept=%d, max_papers=%d",
+            len(papers), PAPER_RELEVANCE_MIN_KEEP_SCORE, len(filtered), max_papers,
         )
-        return filtered
+        return filtered[:max_papers]
+
+    @staticmethod
+    def _annotate_relevance(papers: List[Paper], queries: List[str], topic: str) -> List[Paper]:
+        """_annotate_relevance 为候选论文写入主题相关性分数与可解释原因。"""
+        query_keywords = _extract_query_keywords(queries, topic)
+        query_phrases = _extract_query_phrases(queries, topic)
+        if not query_keywords and not query_phrases:
+            return papers
+
+        for paper in papers:
+            score, reason = SearchService._compute_relevance_score(
+                paper, query_keywords, query_phrases,
+            )
+            paper.topic_relevance_score = score
+            paper.relevance_reason = reason
+        return papers
+
+    @staticmethod
+    def _compute_relevance_score(
+        paper: Paper,
+        query_keywords: set[str],
+        query_phrases: list[str],
+    ) -> tuple[float, str]:
+        """_compute_relevance_score 计算论文与主题的相关性分数和命中依据。"""
+        title_text = paper.get_title().lower()
+        summary_text = paper.get_summary().lower()
+        combined_text = f"{title_text} {summary_text}"
+        keyword_count = max(1, len(query_keywords))
+
+        # 1. 分别计算标题、摘要和完整查询短语命中，标题命中权重最高。
+        title_hits = sorted(keyword for keyword in query_keywords if keyword in title_text)
+        summary_hits = sorted(keyword for keyword in query_keywords if keyword in summary_text)
+        phrase_hits = sorted(phrase for phrase in query_phrases if phrase in combined_text)
+        title_score = len(title_hits) / keyword_count
+        summary_score = len(summary_hits) / keyword_count
+        phrase_score = len(phrase_hits) / max(1, len(query_phrases))
+        score = (
+            PAPER_RELEVANCE_TITLE_WEIGHT * title_score
+            + PAPER_RELEVANCE_SUMMARY_WEIGHT * summary_score
+            + PAPER_RELEVANCE_PHRASE_WEIGHT * phrase_score
+        )
+
+        # 2. 生成前端可展示的简短原因，便于用户理解为什么保留这篇论文。
+        reason_parts: list[str] = []
+        if phrase_hits:
+            reason_parts.append(f"命中主题短语：{', '.join(phrase_hits[:2])}")
+        if title_hits:
+            reason_parts.append(f"标题命中：{', '.join(title_hits[:4])}")
+        if summary_hits:
+            reason_parts.append(f"摘要命中：{', '.join(summary_hits[:4])}")
+        reason = "；".join(reason_parts) if reason_parts else "未命中核心主题词，仅作为候选兜底"
+        return round(min(1.0, score), 4), reason
 
     @staticmethod
     def _score_paper_with_relevance(
@@ -298,9 +355,8 @@ class SearchService:
         authority_int = int(round(authority_score * PAGERANK_LITE_WEIGHT * 1000))
         if not query_keywords:
             return (authority_int,) + base
-        text = f"{paper.get_title()} {paper.get_summary()}".lower()
-        overlap = sum(1 for kw in query_keywords if kw in text)
-        return (overlap, authority_int) + base
+        relevance_int = int(round(paper.get_relevance_score() * 10000))
+        return (relevance_int, authority_int) + base
 
     @staticmethod
     def _score_paper(paper: Paper) -> tuple:
@@ -320,7 +376,8 @@ def _extract_query_keywords(queries: List[str], topic: str = "") -> set[str]:
         all_text += " " + topic
 
     for token in re.findall(r"[a-zA-Z][a-zA-Z0-9\-]{2,}", all_text.lower()):
-        keywords.add(token)
+        if token not in PAPER_RELEVANCE_KEYWORD_STOPWORDS:
+            keywords.add(token)
 
     for char in re.findall(r"[一-鿿]", all_text):
         keywords.add(char)
@@ -332,6 +389,24 @@ def _extract_query_keywords(queries: List[str], topic: str = "") -> set[str]:
             keywords.add(segment[i : i + 2])
 
     return keywords
+
+
+def _extract_query_phrases(queries: List[str], topic: str = "") -> list[str]:
+    """_extract_query_phrases 提取可用于精确匹配的主题短语。"""
+    phrases: list[str] = []
+    for raw in [topic, *queries]:
+        phrase = re.sub(r"\s+", " ", raw.strip().lower())
+        if len(phrase) < 4:
+            continue
+        # 1. 过滤只由停用词组成的泛短语，保留真正能约束主题的组合表达。
+        tokens = [
+            token for token in re.findall(r"[a-zA-Z][a-zA-Z0-9\-]{2,}", phrase)
+            if token not in PAPER_RELEVANCE_KEYWORD_STOPWORDS
+        ]
+        cn_chars = re.findall(r"[一-鿿]+", phrase)
+        if len(tokens) >= 2 or cn_chars:
+            phrases.append(phrase)
+    return list(dict.fromkeys(phrases))
 
 
 def _normalize_title(title: str) -> str:

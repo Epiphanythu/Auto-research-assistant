@@ -82,6 +82,19 @@ PAPER_SOURCE_PRIORITY = {
     PAPER_SOURCE_ARXIV: 1,
 }
 
+# ── 主题相关性评分 ──
+PAPER_RELEVANCE_TITLE_WEIGHT = 0.55
+PAPER_RELEVANCE_SUMMARY_WEIGHT = 0.30
+PAPER_RELEVANCE_PHRASE_WEIGHT = 0.15
+PAPER_RELEVANCE_MIN_KEEP_SCORE = 0.12
+PAPER_RELEVANCE_FALLBACK_KEEP_RATIO = 0.5
+PAPER_RELEVANCE_KEYWORD_STOPWORDS = {
+    "and", "are", "for", "from", "into", "that", "the", "this", "with",
+    "using", "based", "via", "towards", "toward", "study", "survey",
+    "analysis", "research", "paper", "papers", "large", "language",
+    "model", "models", "llm", "llms",
+}
+
 COMPARISON_DIMENSION_METHOD = "方法思想"
 COMPARISON_DIMENSION_DATASET = "实验设置"
 COMPARISON_DIMENSION_ADVANTAGE = "优势"

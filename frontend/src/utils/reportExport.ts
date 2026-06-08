@@ -54,6 +54,15 @@ function formatVerdict(verdict: string) {
   }
 }
 
+// formatEvidenceLines 将论文证据片段转为 Markdown 子条目。
+function formatEvidenceLines(insight: ResearchReport["insights"][number]) {
+  if (!insight.evidence.length) return "  - 暂无";
+  return insight.evidence.slice(0, 3).map((item) => {
+    const label = item.section_kind || item.source || "evidence";
+    return `  - [${label}] ${item.snippet}${item.reason ? `（${item.reason}）` : ""}`;
+  }).join("\n");
+}
+
 // buildMarkdownContent 将研究报告整理为 Markdown 交付内容。
 function buildMarkdownContent(report: ResearchReport) {
   const reliabilityLines = report.synthesis_reliability?.claims.length
@@ -83,8 +92,12 @@ function buildMarkdownContent(report: ResearchReport) {
   const paperLines = report.insights.length
     ? report.insights
         .map(
-          (insight, index) =>
-            `### ${index + 1}. ${insight.paper.title}\n- 问题：${insight.problem}\n- 方法：${insight.method}\n- 创新：${insight.innovation}\n- 发现：${insight.findings}\n- 局限：${insight.limitation}`,
+          (insight, index) => {
+            const relevance = insight.paper.topic_relevance_score
+              ? `- 主题相关性：${Math.round(insight.paper.topic_relevance_score * 100)}%（${insight.paper.relevance_reason || "暂无说明"}）\n`
+              : "";
+            return `### ${index + 1}. ${insight.paper.title}\n${relevance}- 问题：${insight.problem}\n- 方法：${insight.method}\n- 创新：${insight.innovation}\n- 发现：${insight.findings}\n- 局限：${insight.limitation}\n- 证据片段：\n${formatEvidenceLines(insight)}`;
+          },
         )
         .join("\n\n")
     : "暂无论文洞察。";

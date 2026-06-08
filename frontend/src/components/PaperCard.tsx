@@ -14,6 +14,11 @@ function formatSourceLabel(source: string) {
   }
 }
 
+function formatRelevanceScore(score?: number) {
+  if (typeof score !== "number" || score <= 0) return "";
+  return `相关 ${Math.round(score * 100)}%`;
+}
+
 // LAZY_OBSERVER_OPTIONS 提前 200px 触发，提升滚动连续性
 const LAZY_OBSERVER_OPTIONS: IntersectionObserverInit = { rootMargin: "200px" };
 // CARD_MIN_HEIGHT 骨架占位高度，与正常渲染近似，避免布局跳动
@@ -118,6 +123,21 @@ function PaperCardBody({ paper, authorText }: { paper: Paper; authorText: string
           <span className="flex items-center gap-1">
             <Quote className="h-3 w-3" />
             {paper.citation_count} cited
+          </span>
+        )}
+        {formatRelevanceScore(paper.topic_relevance_score) && (
+          <span
+            title={paper.relevance_reason || "主题相关性评分"}
+            style={{
+              background: "#eef2ff",
+              color: "#4338ca",
+              border: "1px solid #c7d2fe",
+              borderRadius: "9999px",
+              padding: "1px 8px",
+              fontWeight: 500,
+            }}
+          >
+            {formatRelevanceScore(paper.topic_relevance_score)}
           </span>
         )}
       </div>

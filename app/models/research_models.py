@@ -78,6 +78,8 @@ class Paper(BaseModel):
     tldr: str = ""
     doi: str = ""
     affiliations: List[str] = Field(default_factory=list)
+    topic_relevance_score: float = 0.0
+    relevance_reason: str = ""
 
     def get_summary(self) -> str:
         """get_summary 获取摘要。"""
@@ -86,6 +88,10 @@ class Paper(BaseModel):
     def get_title(self) -> str:
         """get_title 获取标题。"""
         return self.title
+
+    def get_relevance_score(self) -> float:
+        """get_relevance_score 获取论文与当前主题的相关性分数。"""
+        return self.topic_relevance_score
 
 
 class EvidenceSnippet(BaseModel):

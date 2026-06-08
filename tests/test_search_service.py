@@ -265,3 +265,68 @@ class TestSearchRanking:
         ]
         ranked = SearchService._rank_papers(papers)
         assert ranked[0].paper_id == "b"
+
+    def test_annotates_topic_relevance_score_and_reason(self):
+        """Search results should carry an explainable topic relevance score."""
+        papers = [
+            Paper(
+                paper_id="repair-1",
+                title="Retrieval Augmented Program Repair with Language Models",
+                authors=["A"],
+                summary="The method repairs software bugs using retrieval augmented generation.",
+                published="2024-01-01",
+                source="openalex",
+            )
+        ]
+
+        annotated = SearchService._annotate_relevance(
+            papers,
+            queries=["retrieval augmented program repair"],
+            topic="retrieval augmented program repair",
+        )
+
+        assert annotated[0].topic_relevance_score > 0.5
+        assert "标题命中" in annotated[0].relevance_reason
+
+    def test_filters_low_relevance_when_candidates_exceed_limit(self):
+        """Low relevance papers should be dropped before LLM extraction when there are enough candidates."""
+        papers = [
+            Paper(
+                paper_id="related-1",
+                title="Retrieval Augmented Program Repair",
+                authors=["A"],
+                summary="A program repair method using retrieval augmented language models.",
+                published="2024-01-01",
+                source="openalex",
+            ),
+            Paper(
+                paper_id="related-2",
+                title="Benchmarking Program Repair Agents",
+                authors=["B"],
+                summary="This benchmark studies retrieval and patch generation for program repair.",
+                published="2024-01-01",
+                source="arxiv",
+            ),
+            Paper(
+                paper_id="noise-1",
+                title="Protein Folding with Graph Neural Networks",
+                authors=["C"],
+                summary="A biology paper unrelated to software engineering.",
+                published="2024-01-01",
+                source="crossref",
+            ),
+        ]
+        annotated = SearchService._annotate_relevance(
+            papers,
+            queries=["retrieval augmented program repair"],
+            topic="retrieval augmented program repair",
+        )
+
+        filtered = SearchService._filter_by_relevance(
+            annotated,
+            queries=["retrieval augmented program repair"],
+            topic="retrieval augmented program repair",
+            max_papers=2,
+        )
+
+        assert {paper.paper_id for paper in filtered} == {"related-1", "related-2"}
