@@ -388,6 +388,56 @@ class TestAskText:
 
 
 # ---------------------------------------------------------------------------
+# stream_chat tests
+# ---------------------------------------------------------------------------
+
+
+class TestStreamChat:
+    """Tests for LLMService.stream_chat with mocked streaming HTTP."""
+
+    def test_stream_chat_yields_content_and_closes_response(self, monkeypatch):
+        """stream_chat should parse SSE chunks and close the response context."""
+        monkeypatch.setenv("LLM_BASE_URL", "https://api.example.com")
+        monkeypatch.setenv("LLM_API_KEY", "sk-test")
+        monkeypatch.setenv("LLM_MODEL", "test-model")
+        from app.config import get_settings
+        get_settings.cache_clear()
+
+        mock_response = MagicMock(spec=requests.Response)
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = None
+        mock_response.raise_for_status = MagicMock()
+        mock_response.iter_lines.return_value = [
+            'data: {"choices":[{"delta":{"content":"Hel"}}]}',
+            'data: {"choices":[{"delta":{"content":"lo"}}]}',
+            "data: [DONE]",
+        ]
+        monkeypatch.setattr(requests, "post", MagicMock(return_value=mock_response))
+
+        service = LLMService()
+        assert "".join(service.stream_chat("system", "user")) == "Hello"
+        mock_response.__exit__.assert_called_once()
+
+        get_settings.cache_clear()
+
+    def test_stream_chat_raises_request_error(self, monkeypatch):
+        """stream_chat should wrap requests exceptions as LLMRequestError."""
+        monkeypatch.setenv("LLM_BASE_URL", "https://api.example.com")
+        monkeypatch.setenv("LLM_API_KEY", "sk-test")
+        monkeypatch.setenv("LLM_MODEL", "test-model")
+        from app.config import get_settings
+        get_settings.cache_clear()
+
+        monkeypatch.setattr(requests, "post", MagicMock(side_effect=requests.ConnectionError("fail")))
+
+        service = LLMService()
+        with pytest.raises(LLMRequestError):
+            list(service.stream_chat("system", "user"))
+
+        get_settings.cache_clear()
+
+
+# ---------------------------------------------------------------------------
 # Error class tests
 # ---------------------------------------------------------------------------
 

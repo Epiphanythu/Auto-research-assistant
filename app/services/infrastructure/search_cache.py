@@ -33,6 +33,8 @@ class SearchCache:
         """get 查询缓存，命中且未过期则返回结果，否则返回 None。"""
         key = self._make_key(query, source)
         with self._lock:
+            # 1. 每次读取前顺手清理过期项，避免 size 与淘汰策略长期被僵尸缓存污染。
+            self._purge_expired_locked()
             entry = self._store.get(key)
             if entry is None:
                 return None
@@ -45,15 +47,20 @@ class SearchCache:
                 "SearchCache hit, query=%s, source=%s, papers=%d",
                 query[:40], source, len(papers),
             )
-            return papers
+            return [paper.model_copy(deep=True) for paper in papers]
 
     def put(self, query: str, source: str, papers: List[Paper]) -> None:
         """put 写入缓存。"""
         key = self._make_key(query, source)
         with self._lock:
+            # 1. 先清理过期项，再决定是否淘汰，尽量把容量留给真正的热点数据。
+            self._purge_expired_locked()
             if len(self._store) >= self._max_entries:
                 self._evict_locked()
-            self._store[key] = (time.monotonic() + self._ttl, papers)
+            self._store[key] = (
+                time.monotonic() + self._ttl,
+                [paper.model_copy(deep=True) for paper in papers],
+            )
             logger.debug(
                 "SearchCache put, query=%s, source=%s, papers=%d",
                 query[:40], source, len(papers),
@@ -67,6 +74,7 @@ class SearchCache:
     def size(self) -> int:
         """size 返回当前缓存条目数。"""
         with self._lock:
+            self._purge_expired_locked()
             return len(self._store)
 
     @staticmethod
@@ -81,6 +89,13 @@ class SearchCache:
             return
         oldest_key = min(self._store, key=lambda k: self._store[k][0])
         del self._store[oldest_key]
+
+    def _purge_expired_locked(self) -> None:
+        """_purge_expired_locked 清理已过期缓存（需在锁内调用）。"""
+        now = time.monotonic()
+        expired_keys = [key for key, (expires_at, _) in self._store.items() if now > expires_at]
+        for key in expired_keys:
+            del self._store[key]
 
 
 # 进程级单例缓存

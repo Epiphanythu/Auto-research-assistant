@@ -127,7 +127,8 @@ export function useResearchStream() {
 
   const resumeStream = useCallback(
     async (taskId: string, cursor: number) => {
-      const url = `${API_BASE_URL}/api/v1/research/tasks/${taskId}/stream?cursor=${cursor}`;
+      const safeCursor = Number.isFinite(cursor) && cursor > 0 ? Math.floor(cursor) : 0;
+      const url = `${API_BASE_URL}/api/v1/research/tasks/${encodeURIComponent(taskId)}/stream?cursor=${safeCursor}`;
       await consumeStream(url, { method: "GET" }, { resumeTaskId: taskId, resumeCursor: cursor });
     },
     [consumeStream],
@@ -137,7 +138,7 @@ export function useResearchStream() {
     const taskId = useResearchStore.getState().activeTaskId;
     if (taskId) {
       try {
-        await fetch(`${API_BASE_URL}/api/v1/research/tasks/${taskId}`, { method: "DELETE" });
+        await fetch(`${API_BASE_URL}/api/v1/research/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE" });
       } catch {
         // 取消失败时仅断开本地连接
       }

@@ -81,6 +81,9 @@ async function requestApiJson<T>(path: string, init?: RequestInit): Promise<T> {
     const payload = await parseErrorPayload(response);
     throw buildResponseError(response.status, payload);
   }
+  if (response.status === 204) {
+    return undefined as T;
+  }
   return (await response.json()) as T;
 }
 
@@ -99,11 +102,11 @@ export async function requestReportHistory(limit = 12): Promise<ReportArchiveSum
 }
 
 export async function requestArchivedReport(reportId: string): Promise<ResearchReport> {
-  return requestApiJson<ResearchReport>(`/api/v1/reports/${reportId}`);
+  return requestApiJson<ResearchReport>(`/api/v1/reports/${encodeURIComponent(reportId)}`);
 }
 
 export async function deleteArchivedReport(reportId: string): Promise<void> {
-  await requestApiJson<void>(`/api/v1/reports/${reportId}`, { method: "DELETE" });
+  await requestApiJson<void>(`/api/v1/reports/${encodeURIComponent(reportId)}`, { method: "DELETE" });
 }
 
 // ============ Trend Analysis API ============

@@ -165,42 +165,44 @@ class LLMService:
         """stream_chat 流式请求模型，逐 token 产出文本片段。"""
         self.ensure_enabled()
         try:
-            response = requests.post(
-                f"{self.settings.get_llm_base_url().rstrip('/')}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self.settings.get_llm_api_key()}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": self.settings.get_llm_model(),
-                    "temperature": temperature,
-                    "stream": True,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                },
-                timeout=120,
-                stream=True,
-            )
-            response.raise_for_status()
+            # 1. 流式请求也纳入全局并发限制，并用上下文管理器保证中断时释放连接。
+            with _LLM_CONCURRENCY_SEMAPHORE:
+                with requests.post(
+                    f"{self.settings.get_llm_base_url().rstrip('/')}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.settings.get_llm_api_key()}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": self.settings.get_llm_model(),
+                        "temperature": temperature,
+                        "stream": True,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                    },
+                    timeout=self.settings.get_request_timeout_seconds(),
+                    stream=True,
+                ) as response:
+                    response.raise_for_status()
+                    # 2. 逐行解析 OpenAI 兼容 SSE 数据，只产出有效 content 片段。
+                    for line in response.iter_lines(decode_unicode=True):
+                        if not line or not line.startswith("data: "):
+                            continue
+                        data = line[6:]
+                        if data.strip() == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data)
+                            delta = chunk["choices"][0].get("delta", {})
+                            content = delta.get("content", "")
+                            if content:
+                                yield content
+                        except (json.JSONDecodeError, KeyError, IndexError):
+                            continue
         except requests.RequestException as error:
             raise LLMRequestError(f"流式调用模型服务失败：{error}") from error
-
-        for line in response.iter_lines(decode_unicode=True):
-            if not line or not line.startswith("data: "):
-                continue
-            data = line[6:]
-            if data.strip() == "[DONE]":
-                break
-            try:
-                chunk = json.loads(data)
-                delta = chunk["choices"][0].get("delta", {})
-                content = delta.get("content", "")
-                if content:
-                    yield content
-            except (json.JSONDecodeError, KeyError, IndexError):
-                continue
 
     def _do_ask_json(
         self,

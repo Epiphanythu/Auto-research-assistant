@@ -692,29 +692,6 @@ function SectionCard({
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div
-      className="px-3 py-2"
-      style={{ background: "#f6f9fc", border: "1px solid #e3e8ee", borderRadius: "12px" }}
-    >
-      <p
-        style={{
-          color: "#64748b",
-          fontSize: "11px",
-          fontWeight: 600,
-          textTransform: "uppercase",
-          letterSpacing: "0.2em",
-        }}
-      >
-        {label}
-      </p>
-      <p className="mt-1 text-sm font-semibold" style={{ color: "#0d253d" }}>
-        {value}
-      </p>
-    </div>
-  );
-}
 
 function ListBlock({ label, items }: { label: string; items: string[] }) {
   return (

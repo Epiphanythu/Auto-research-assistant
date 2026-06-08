@@ -15,7 +15,7 @@ import { ResearchForm } from "@/components/ResearchForm";
 import ProgressPanel from "@/components/ProgressPanel";
 import { useResearchStore } from "@/store/researchStore";
 import { useResearchStream } from "@/hooks/useEventSource";
-import type { ResearchReport, ResearchRequest } from "@/types/research";
+import type { ResearchRequest } from "@/types/research";
 import { deleteArchivedReport, requestArchivedReport, requestReportHistory } from "@/utils/api";
 import { normalizeReport } from "@/utils/normalizeReport";
 
@@ -24,7 +24,6 @@ export default function Home() {
     report,
     requestStatus,
     errorState,
-    runResearch,
     clearError,
     lastRequest,
     historyStatus,
@@ -35,7 +34,6 @@ export default function Home() {
     compareSelection,
     toggleCompareSelection,
     clearCompareSelection,
-    setReportFromStream,
   } = useResearchStore();
 
   const stream = useResearchStream();

@@ -14,6 +14,7 @@ from app.constant.paper_constant import (
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
 )
 from app.constant.report_constant import DEFAULT_REPORT_ARCHIVE_DIR
+from app.constant.task_constant import DEFAULT_RESEARCH_MAX_IN_FLIGHT
 
 
 class Settings:
@@ -46,7 +47,9 @@ class Settings:
         self.log_file_max_bytes = int(os.getenv("LOG_FILE_MAX_BYTES", "10485760"))  # 10MB
         self.log_file_backup_count = int(os.getenv("LOG_FILE_BACKUP_COUNT", "5"))
         # 单 IP 同时进行的研究任务上限
-        self.research_max_in_flight = int(os.getenv("RESEARCH_MAX_IN_FLIGHT", "2"))
+        self.research_max_in_flight = int(
+            os.getenv("RESEARCH_MAX_IN_FLIGHT", str(DEFAULT_RESEARCH_MAX_IN_FLIGHT))
+        )
         # Replay 模式：开启后，研究流不再实际跑 LangGraph，而是从归档中回放
         self.replay_mode = os.getenv("REPLAY_MODE", "").strip().lower() in (
             "1", "true", "yes", "on",

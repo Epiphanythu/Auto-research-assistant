@@ -3,6 +3,7 @@
 DEFAULT_REPORT_ARCHIVE_DIR = "app/data/report_archive"
 DEFAULT_REPORT_ARCHIVE_INDEX_FILE = "index.json"
 DEFAULT_REPORT_HISTORY_LIMIT = 12
+REPORT_ID_PATTERN = r"^report-\d{8}-\d{6}-[0-9a-f]{8}$"
 
 # ── 导出 Markdown 报告 ──
 EXPORT_FORMAT_MARKDOWN = "md"

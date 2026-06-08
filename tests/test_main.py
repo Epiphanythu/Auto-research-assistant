@@ -217,3 +217,24 @@ class TestValidation:
         client = TestClient(main_module.app)
         response = client.post("/api/v1/research", json={"topic": 123, "max_papers": 1})
         assert response.status_code == 422
+
+
+class TestResearchStreamCapacity:
+    """TestResearchStreamCapacity 流式研究任务容量保护测试。"""
+
+    def test_stream_research_returns_429_when_registry_is_full(self, monkeypatch):
+        """test_stream_research_returns_429_when_registry_is_full 注册表满载时返回结构化 429。"""
+        from app.api_error import ActiveTaskLimitExceededError
+
+        class _FullRegistry:
+            def create_task(self, request):
+                raise ActiveTaskLimitExceededError(max_active_tasks=1)
+
+        monkeypatch.setattr(main_module, "get_task_registry", lambda: _FullRegistry())
+
+        client = TestClient(main_module.app)
+        response = client.post("/api/v1/research/stream", json={"topic": "test", "max_papers": 1})
+
+        assert response.status_code == 429
+        data = response.json()
+        assert data["error_code"] == "too_many_active_tasks"

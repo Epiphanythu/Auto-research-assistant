@@ -1,0 +1,5 @@
+"""task_constant 研究任务注册表相关常量。"""
+
+DEFAULT_TASK_TTL_SECONDS = 6 * 60 * 60
+DEFAULT_MAX_TASKS = 100
+DEFAULT_RESEARCH_MAX_IN_FLIGHT = 2

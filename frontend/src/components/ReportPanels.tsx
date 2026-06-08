@@ -1,18 +1,17 @@
 import { useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, FileText, Lightbulb, MessageSquare, Quote, ScanSearch, SearchCode, ShieldCheck } from "lucide-react";
+import DOMPurify from "dompurify";
 import { marked } from "marked";
 
 import type { ClaimFactCheck, ComparisonSummary, Contradiction, DebateRound, FactCheckReport, Paper, PaperInsight, ReviewReport, StageTransition, SynthesisReliability, UnitSynthesis } from "@/types/research";
 
-// sanitizeMarkdownHTML 简单清洗 marked 渲染结果，剔除 <script> 标签并去除常见 on* 内联事件
+// sanitizeMarkdownHTML 清洗 marked 渲染结果，避免报告内容中的脚本、事件属性和危险链接协议执行。
 function sanitizeMarkdownHTML(raw: string): string {
-  // 1. 移除 <script>...</script> 块（含异常闭合）
-  let out = raw.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
-  out = out.replace(/<script\b[^>]*>/gi, "");
-  // 2. 移除内联事件属性，避免 onerror/onclick 等触发执行
-  out = out.replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, "");
-  out = out.replace(/\son[a-z]+\s*=\s*'[^']*'/gi, "");
-  return out;
+  // 1. DOMPurify 负责解析 HTML 语义，比正则清洗更不容易漏掉 SVG、未引号属性等边界场景。
+  return DOMPurify.sanitize(raw, {
+    USE_PROFILES: { html: true },
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|[^a-z]|[a-z+.-]+(?:[^a-z+.-:]|$))/i,
+  });
 }
 
 export function OverviewPanel({
@@ -565,19 +564,6 @@ function MiniMetric({ label, value }: { label: string; value: number | string })
       <p style={{ color: "#0d253d", fontSize: "28px", fontWeight: 600, marginTop: "12px" }}>{value}</p>
     </div>
   );
-}
-
-function formatSupportLevel(level: string) {
-  switch (level) {
-    case "supported":
-      return "支持充分";
-    case "partial":
-      return "支持部分充分";
-    case "unsupported":
-      return "暂未支持";
-    default:
-      return level || "未标注";
-  }
 }
 
 function formatVerdictLabel(verdict: string) {

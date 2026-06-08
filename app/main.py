@@ -314,8 +314,8 @@ def _start_research_worker(task: ResearchTask) -> None:
                     try:
                         report = ResearchReport(**event.data)
                         _try_archive(report)
-                    except Exception:  # 归档失败不影响主流程
-                        pass
+                    except Exception:
+                        logger.warning("Report archive failed in stream worker, task_id=%s", task.task_id, exc_info=True)
             task.mark_status("done")
         except APIError as error:
             task.append_event(SSEEvent(

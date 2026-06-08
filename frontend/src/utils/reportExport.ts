@@ -5,7 +5,14 @@ const MARKDOWN_EXPORT_TYPE = "text/markdown;charset=utf-8";
 
 // sanitizeFileName 清理导出文件名中的特殊字符。
 function sanitizeFileName(input: string) {
-  return input.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-").replace(/\s+/g, "-").slice(0, 80);
+  const sanitized = Array.from(input).map((char) => {
+    const code = char.charCodeAt(0);
+    if (code <= 31 || '<>:"/\\|?*'.includes(char)) {
+      return "-";
+    }
+    return char;
+  }).join("");
+  return sanitized.replace(/\s+/g, "-").slice(0, 80);
 }
 
 // buildBaseName 生成统一的导出文件名前缀。
@@ -31,20 +38,6 @@ function formatList(items: string[]) {
     return "- 暂无";
   }
   return items.map((item) => `- ${item}`).join("\n");
-}
-
-// formatSupportLevel 规整支持度文案。
-function formatSupportLevel(level: string) {
-  switch (level) {
-    case "supported":
-      return "支持充分";
-    case "partial":
-      return "支持部分充分";
-    case "unsupported":
-      return "暂未支持";
-    default:
-      return level || "未标注";
-  }
 }
 
 // formatVerdict 规整审查结论文案。

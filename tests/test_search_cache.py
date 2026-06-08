@@ -45,6 +45,18 @@ class TestSearchCacheGetPut:
         assert cache.get("query", "SemanticScholar") is not None
         assert cache.get("query", "arXiv") is None
 
+    def test_cache_returns_copy_without_mutating_internal_store(self):
+        cache = SearchCache()
+        cache.put("query", "source", [_make_paper("p1", "Paper 1")])
+
+        result = cache.get("query", "source")
+        assert result is not None
+        result[0].title = "Mutated title"
+
+        refreshed = cache.get("query", "source")
+        assert refreshed is not None
+        assert refreshed[0].title == "Paper 1"
+
 
 class TestSearchCacheExpiry:
     """Tests for TTL-based expiry."""
@@ -61,6 +73,12 @@ class TestSearchCacheExpiry:
         papers = [_make_paper("p1", "Paper 1")]
         cache.put("query", "source", papers)
         assert cache.get("query", "source") is not None
+
+    def test_size_purges_expired_entries(self):
+        cache = SearchCache(ttl_seconds=0)
+        cache.put("query", "source", [_make_paper("p1", "Paper 1")])
+        time.sleep(0.01)
+        assert cache.size() == 0
 
 
 class TestSearchCacheEviction:

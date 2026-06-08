@@ -172,3 +172,29 @@ class ArchivedReportNotFoundError(APIError):
             detail=f"未找到编号为 {report_id} 的历史报告。",
             suggestion="请刷新历史记录列表后重试，或重新生成新的研究报告。",
         )
+
+
+class InvalidReportIdError(APIError):
+    """InvalidReportIdError 归档报告编号格式非法。"""
+
+    def __init__(self, report_id: str) -> None:
+        super().__init__(
+            status_code=400,
+            error_code="invalid_report_id",
+            title="报告编号无效",
+            detail=f"报告编号格式不合法：{report_id}",
+            suggestion="请从历史报告列表中选择有效报告，或刷新页面后重试。",
+        )
+
+
+class ActiveTaskLimitExceededError(APIError):
+    """ActiveTaskLimitExceededError 正在运行的研究任务超过上限。"""
+
+    def __init__(self, max_active_tasks: int) -> None:
+        super().__init__(
+            status_code=429,
+            error_code="too_many_active_tasks",
+            title="并行任务过多",
+            detail=f"当前已有 {max_active_tasks} 个研究任务在运行或等待运行。",
+            suggestion="请等待已有任务完成，或取消不需要的任务后再提交新的研究任务。",
+        )

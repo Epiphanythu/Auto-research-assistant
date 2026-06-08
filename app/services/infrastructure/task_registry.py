@@ -14,15 +14,15 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Dict, Iterator, List, Optional
 
+from app.api_error import ActiveTaskLimitExceededError
+from app.constant.task_constant import (
+    DEFAULT_MAX_TASKS,
+    DEFAULT_RESEARCH_MAX_IN_FLIGHT,
+    DEFAULT_TASK_TTL_SECONDS,
+)
 from app.models.research_models import ResearchRequest, SSEEvent
 
 logger = logging.getLogger(__name__)
-
-# 任务最长保留时间（秒）：6 小时
-DEFAULT_TASK_TTL_SECONDS = 6 * 60 * 60
-# 单进程最多并发任务数（防止内存爆炸）
-DEFAULT_MAX_TASKS = 100
-
 
 @dataclass
 class ResearchTask:
@@ -46,6 +46,10 @@ class ResearchTask:
     def is_finished(self) -> bool:
         """is_finished 判断任务是否已结束（含正常 / 异常 / 取消）。"""
         return self.status in {"done", "error", "cancelled"}
+
+    def is_active(self) -> bool:
+        """is_active 判断任务是否仍占用运行名额。"""
+        return not self.is_finished()
 
     def is_cancel_requested(self) -> bool:
         """is_cancel_requested 判断是否被请求取消。"""
@@ -85,18 +89,19 @@ class TaskRegistry:
         self,
         ttl_seconds: int = DEFAULT_TASK_TTL_SECONDS,
         max_tasks: int = DEFAULT_MAX_TASKS,
+        max_active_tasks: int = DEFAULT_RESEARCH_MAX_IN_FLIGHT,
     ) -> None:
         self._tasks: Dict[str, ResearchTask] = {}
         self._lock = threading.Lock()
         self._ttl = ttl_seconds
         self._max_tasks = max_tasks
+        self._max_active_tasks = max(1, max_active_tasks)
 
     def create_task(self, request: ResearchRequest) -> ResearchTask:
         """create_task 创建并登记一个新任务，返回任务对象。"""
-        # 1. 清理过期任务，避免内存累积
-        self._evict_expired_locked_safely()
-        # 2. 若超出上限，淘汰最早完成的任务
         with self._lock:
+            # 1. 清理过期任务，并优先淘汰已完成任务，避免历史事件无限累积。
+            self._evict_expired_locked()
             if len(self._tasks) >= self._max_tasks:
                 finished = sorted(
                     (t for t in self._tasks.values() if t.is_finished()),
@@ -104,6 +109,9 @@ class TaskRegistry:
                 )
                 for old in finished[: max(1, len(self._tasks) - self._max_tasks + 1)]:
                     self._tasks.pop(old.task_id, None)
+            # 2. 对 pending/running 任务做硬上限，防止 SSE 连接断开后后台任务继续堆积。
+            if self.active_task_count_locked() >= self._max_active_tasks:
+                raise ActiveTaskLimitExceededError(self._max_active_tasks)
             task = ResearchTask(
                 task_id=uuid.uuid4().hex,
                 topic=request.get_topic(),
@@ -111,6 +119,11 @@ class TaskRegistry:
             )
             self._tasks[task.task_id] = task
             return task
+
+    def active_task_count(self) -> int:
+        """active_task_count 获取当前仍占用运行名额的任务数量。"""
+        with self._lock:
+            return self.active_task_count_locked()
 
     def get_task(self, task_id: str) -> Optional[ResearchTask]:
         """get_task 按 task_id 获取任务，未找到返回 None。"""
@@ -161,16 +174,19 @@ class TaskRegistry:
                     data={"task_id": task.task_id, "events_so_far": len(task.events)},
                 )
 
-    def _evict_expired_locked_safely(self) -> None:
-        """_evict_expired_locked_safely 清理超过 TTL 的已完成任务。"""
+    def active_task_count_locked(self) -> int:
+        """active_task_count_locked 获取活跃任务数量（需在锁内调用）。"""
+        return sum(1 for task in self._tasks.values() if task.is_active())
+
+    def _evict_expired_locked(self) -> None:
+        """_evict_expired_locked 清理超过 TTL 的已完成任务（需在锁内调用）。"""
         cutoff = time.time() - self._ttl
-        with self._lock:
-            stale_ids = [
-                tid for tid, task in self._tasks.items()
-                if task.is_finished() and (task.finished_at or task.created_at) < cutoff
-            ]
-            for tid in stale_ids:
-                self._tasks.pop(tid, None)
+        stale_ids = [
+            tid for tid, task in self._tasks.items()
+            if task.is_finished() and (task.finished_at or task.created_at) < cutoff
+        ]
+        for tid in stale_ids:
+            self._tasks.pop(tid, None)
 
 
 _GLOBAL_REGISTRY: Optional[TaskRegistry] = None
@@ -184,7 +200,12 @@ def get_task_registry() -> TaskRegistry:
     if _GLOBAL_REGISTRY is None:
         with _REGISTRY_LOCK:
             if _GLOBAL_REGISTRY is None:
-                _GLOBAL_REGISTRY = TaskRegistry()
+                # 1. 延迟读取配置，避免模块导入期形成 config 与服务层循环依赖。
+                from app.config import get_settings
+
+                _GLOBAL_REGISTRY = TaskRegistry(
+                    max_active_tasks=get_settings().get_research_max_in_flight()
+                )
     return _GLOBAL_REGISTRY
 
 

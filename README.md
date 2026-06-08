@@ -194,7 +194,7 @@ cd auto-research-assistant
 uv sync
 
 # 前端
-cd frontend && npm install && cd ..
+cd frontend && npm ci && cd ..
 ```
 
 ### 2. 配置环境变量
@@ -206,11 +206,12 @@ cp .env.example .env
 编辑 `.env`，填入大模型相关凭证：
 
 ```env
-LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4   # 任意 OpenAI 兼容端点
+LLM_BASE_URL=https://open.bigmodel.cn/api/coding/paas/v4
 LLM_API_KEY=your-api-key
-LLM_MODEL=glm-4-flash                                 # 或 gpt-4o-mini 等
+LLM_MODEL=glm-5.1
 LOG_LEVEL=INFO
 REPORT_ARCHIVE_DIR=app/data/report_archive            # 可选，报告归档目录
+RESEARCH_MAX_IN_FLIGHT=2                              # 可选，后台研究任务并行上限
 ```
 
 > 兼容任何 OpenAI 风格 API（OpenAI、智谱 GLM、DeepSeek、通义千问、本地 Ollama 等）。
@@ -310,7 +311,14 @@ tests/                          # 后端测试
 ## 测试
 
 ```bash
-uv run python -m pytest tests/ -v
+# 默认排除真实 LLM 集成测试
+uv run python -m pytest -v
+
+# 已配置真实 .env 后，如需验证真实 LLM 调用
+uv run python -m pytest -m integration -v
+
+# 前端类型检查、Lint 与生产构建
+cd frontend && npm run check && npm run lint && npm run build
 ```
 
 ## 许可证

@@ -96,6 +96,20 @@ class TestReportArchiveSave:
 
         get_settings.cache_clear()
 
+    def test_save_writes_index_atomically_without_temp_file_residue(self, tmp_path, monkeypatch):
+        """Saving should replace index.json atomically and not leave temp files behind."""
+        monkeypatch.setenv("REPORT_ARCHIVE_DIR", str(tmp_path))
+        from app.config import get_settings
+        get_settings.cache_clear()
+
+        service = ReportArchiveService()
+        service.save_report(_build_report())
+
+        assert (tmp_path / "index.json").exists()
+        assert list(tmp_path.glob("index.json.tmp")) == []
+
+        get_settings.cache_clear()
+
 
 class TestReportArchiveList:
     """Tests for ReportArchiveService.list_reports."""
@@ -176,7 +190,21 @@ class TestReportArchiveGet:
         service = ReportArchiveService()
 
         with pytest.raises(ArchivedReportNotFoundError):
-            service.get_report("nonexistent-id")
+            service.get_report("report-20260608-120000-deadbeef")
+
+        get_settings.cache_clear()
+
+    def test_get_rejects_invalid_report_id(self, tmp_path, monkeypatch):
+        """Getting a report with invalid id should raise InvalidReportIdError."""
+        monkeypatch.setenv("REPORT_ARCHIVE_DIR", str(tmp_path))
+        from app.config import get_settings
+        get_settings.cache_clear()
+
+        from app.api_error import InvalidReportIdError
+        service = ReportArchiveService()
+
+        with pytest.raises(InvalidReportIdError):
+            service.get_report("../index")
 
         get_settings.cache_clear()
 
@@ -188,6 +216,24 @@ class TestReportArchiveSummary:
         """Summary should contain correct paper count, stage count, and score."""
         monkeypatch.setenv("REPORT_ARCHIVE_DIR", str(tmp_path))
         from app.config import get_settings
+        get_settings.cache_clear()
+
+
+class TestReportArchiveDelete:
+    """TestReportArchiveDelete 删除归档报告测试。"""
+
+    def test_delete_rejects_invalid_report_id(self, tmp_path, monkeypatch):
+        """delete_report should reject invalid report ids before touching files."""
+        monkeypatch.setenv("REPORT_ARCHIVE_DIR", str(tmp_path))
+        from app.config import get_settings
+        get_settings.cache_clear()
+
+        from app.api_error import InvalidReportIdError
+        service = ReportArchiveService()
+
+        with pytest.raises(InvalidReportIdError):
+            service.delete_report("../index")
+
         get_settings.cache_clear()
 
         service = ReportArchiveService()

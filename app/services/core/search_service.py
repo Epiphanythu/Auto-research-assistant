@@ -12,7 +12,6 @@ from typing import Dict, List
 from app.api_error import (
     APIError,
     SearchAggregationError,
-    SearchSourceUnavailableError,
 )
 from app.clients.arxiv_client import ArxivClient
 from app.clients.crossref_client import CrossRefClient
@@ -26,14 +25,12 @@ from app.constant.paper_constant import (
     PAPER_SOURCE_PRIORITY,
     PAPER_SOURCE_CROSSREF,
     PAPER_SOURCE_SEMANTIC_SCHOLAR,
+    SEARCH_MAX_WORKERS,
 )
 from app.models.research_models import Paper, ResearchPlan, ResearchRequest
 from app.services.infrastructure.search_cache import SearchCache, get_search_cache
 
 logger = logging.getLogger(__name__)
-
-SEARCH_MAX_WORKERS = 6
-
 
 class SearchService:
     """SearchService 论文检索服务（并行多源聚合）。"""
