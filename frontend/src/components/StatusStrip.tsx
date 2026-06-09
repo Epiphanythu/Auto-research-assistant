@@ -1,4 +1,4 @@
-import { AlertTriangle, BookOpenText, FileCheck2, Files, Gauge, Radar } from "lucide-react";
+import { AlertTriangle, BookOpenText, FileCheck2, Files, Gauge } from "lucide-react";
 
 type StatusStripProps = {
   paperCount: number;
@@ -6,7 +6,6 @@ type StatusStripProps = {
   claimCount: number;
   supportScore: number;
   unsupportedCount: number;
-  stageCount: number;
 };
 
 export function StatusStrip({
@@ -15,7 +14,6 @@ export function StatusStrip({
   claimCount,
   supportScore,
   unsupportedCount,
-  stageCount,
 }: StatusStripProps) {
   const cards = [
     { label: "论文数量", value: paperCount, icon: Files },
@@ -23,11 +21,10 @@ export function StatusStrip({
     { label: "结论映射", value: claimCount, icon: FileCheck2 },
     { label: "支持率", value: `${Math.round(supportScore * 100)}%`, icon: Gauge },
     { label: "未支持结论", value: unsupportedCount, icon: AlertTriangle },
-    { label: "状态阶段", value: stageCount, icon: Radar },
   ];
 
   return (
-    <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+    <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
       {cards.map((card) => {
         const Icon = card.icon;
         return (

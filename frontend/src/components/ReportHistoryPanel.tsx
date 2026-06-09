@@ -316,9 +316,8 @@ export function ReportHistoryPanel({
                 </span>
               </div>
 
-              <div className="mt-4 grid gap-3 md:grid-cols-3">
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
                 <MiniMetric label="论文数" value={item.paper_count} />
-                <MiniMetric label="阶段数" value={item.stage_count} />
                 <MiniMetric
                   label="支持率"
                   value={`${Math.round(item.support_score * 100)}%`}

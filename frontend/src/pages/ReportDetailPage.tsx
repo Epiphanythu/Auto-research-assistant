@@ -152,7 +152,6 @@ export default function ReportDetailPage() {
                 value={report.synthesis_reliability ? `${Math.round(report.synthesis_reliability.overall_score * 100)}%` : "-"}
               />
               <MetaTag label="辩论轮数" value={String(report.debate_log?.length ?? 0)} />
-              <MetaTag label="阶段数" value={String(report.stage_history.length)} />
             </div>
           </div>
 

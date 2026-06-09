@@ -244,7 +244,7 @@ function CompareMatrix({ reports }: { reports: ResearchReport[] }) {
       <SectionCard
         icon={<GitCompareArrows className="h-4 w-4" />}
         title="核心指标对比"
-        description="一眼看到不同报告在论文数、阶段数、支持率、研究空白和审查结论上的差异。"
+        description="一眼看到不同报告在论文数、支持率、研究空白和审查结论上的差异。"
       >
         <CoreMetricsTable reports={reports} />
       </SectionCard>
@@ -382,7 +382,6 @@ function CoreMetricsTable({ reports }: { reports: ResearchReport[] }) {
   const rows: Array<{ label: string; render: (report: ResearchReport) => string }> = [
     { label: "Topic", render: (r) => r.request.topic },
     { label: "论文数", render: (r) => String(r.papers.length) },
-    { label: "阶段数", render: (r) => String(r.stage_history.length) },
     {
       label: "可靠性",
       render: (r) =>
